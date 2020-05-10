@@ -6,7 +6,7 @@ CONFIG=./config/hyperparams_1.ini
 NAME=trial1
 
 # Training with the full training set
-MAX_EPOCH=15
+MAX_EPOCH=40
 python main.py \
     --gpu ${GPU} \
     --model ${MODEL} \

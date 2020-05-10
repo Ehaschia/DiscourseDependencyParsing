@@ -34,8 +34,8 @@ class ArcFactoredModel(chainer.Chain):
         :type template_feature_extractor1: TemplateFeatureExtractor1
         :type template_feature_extractor2: TemplateFeatureExtractor2
         """
-        assert "<UNK>" in vocab_word
-        assert "<UNK>" in vocab_deprel
+        assert "<unk>" in vocab_word
+        assert "<unk>" in vocab_deprel
         assert "<root>" in vocab_word
         assert "<root>" in vocab_postag
         assert "<root>" in vocab_deprel
@@ -65,8 +65,8 @@ class ArcFactoredModel(chainer.Chain):
         self.mlp_dim = mlp_dim
         self.n_relations = len(self.vocab_relation)
 
-        self.unk_word_id = self.vocab_word["<UNK>"]
-        self.unk_deprel_id = self.vocab_deprel["<UNK>"]
+        self.unk_word_id = self.vocab_word["<unk>"]
+        self.unk_deprel_id = self.vocab_deprel["<unk>"]
 
         links = {}
         # EDU embedding

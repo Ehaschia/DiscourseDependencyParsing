@@ -211,7 +211,7 @@ def main(args):
                           path_pred=path_pred)
             scores = metrics.attachment_scores(
                         pred_path=path_pred,
-                        gold_path=os.path.join(config.getpath("data"), "rstdt", "renamed", "test.arcs"))
+                        gold_path=os.path.join(config.getpath("data"), "rstdt", "wsj", "test", "gold.arcs"))
             scores["LAS"] *= 100.0
             scores["UAS"] *= 100.0
             utils.write_json(path_eval, scores)

@@ -7,11 +7,10 @@
 ## Requirements ##
 
 - numpy
+- spacy >= 2.1.9
 - chainer >= 6.1.0
 - jsonlines
 - pyprind
-- [Stanford Tokenizer](https://nlp.stanford.edu/static/software/tokenizer.shtml)
-- [Stanford CoreNLP](https://stanfordnlp.github.io/CoreNLP/index.html)
 
 ## Configuration ##
 
@@ -50,10 +49,8 @@ $ pip install gensim
 $ pip install nltk
 $ git clone https://github.com/norikinishida/utils.git
 $ git clone https://github.com/norikinishida/treetk.git
-$ git clone https://github.com/norikinishida/textpreprocessor.git
 $ cp -r ./utils/utils ..
 $ cp -r ./treetk/treetk ..
-$ cp -r ./textpreprocessor/textpreprocessor ..
 ```
 
 ## Preprocessing ##
@@ -65,8 +62,9 @@ $ cp -r ./textpreprocessor/textpreprocessor ..
 ```
 
 - The following directories will be generated:
-    - ./data/rstdt/renamed (the preprocessed data)
-    - ./data/rstdt-vocab (vocabularies and class names)
+    - ./data/rstdt/wsj/{train,test} (preprocessed RST-DT)
+    - ./data/ptbwsj_wo_rstdt {preprocessed PTB-WSJ}
+    - ./data/rstdt-vocab (vocabularies)
 
 ## Parsing Model: Arc-Factored Model ##
 
@@ -96,7 +94,7 @@ $ cp -r ./textpreprocessor/textpreprocessor ..
 - Run the following command:
 
 ```
-python main.py --gpu 0 --model arcfactoredmodel --config ./config/hyperparams_1.ini --name trial1 --actiontype train --max_epoch 60
+python main.py --gpu 0 --model arcfactoredmodel --config ./config/hyperparams_1.ini --name trial1 --actiontype train --max_epoch 40
 ```
 
 - The following files will be generated:
