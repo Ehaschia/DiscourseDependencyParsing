@@ -1,4 +1,4 @@
-# Discourse Dependency Parsing Using Graph-based Model
+# Discourse Dependency Parsing Using Arc-factored Model
 
 - Task: Discourse dependency parsing based on Rhetorical Structure Theory
     - Input: EDUs, syntactic features, template features, sentence/paragraph boundaries
@@ -17,8 +17,8 @@
 1. Clone this repository and create directories to store preprocessed data and outputs
 
 ```
-$ git clone https://github.com/norikinishida/DiscourseDependencyParsing-GraphBasedModel
-$ cd ./DiscourseDependencyParsing-GraphBasedModel
+$ git clone https://github.com/norikinishida/DiscourseDependencyParsing-ArcFactoredModel
+$ cd ./DiscourseDependencyParsing-ArcFactoredModel
 $ mkdir ./data
 $ mkdir ./results
 ```
