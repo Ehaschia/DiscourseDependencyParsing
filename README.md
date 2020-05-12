@@ -36,6 +36,7 @@ data = "./data"
 results = "./results"
 pretrained_word_embeddings = "/path/to/your/pretrained_word_embeddings"
 rstdt = "/path/to/rst_discourse_treebank/data/RSTtrees-WSJ-main-1.0"
+ptbwsj = "/path/to/LDC99T42/treebank_3/raw/wsj"
 ```
 
 4. Clone other libraries
