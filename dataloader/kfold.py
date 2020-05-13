@@ -25,8 +25,8 @@ def kfold(n_splits, split_id, databatch):
                             batch_edus_head=databatch.batch_edus_head[train_indices],
                             batch_sbnds=databatch.batch_sbnds[train_indices],
                             batch_pbnds=databatch.batch_pbnds[train_indices],
-                            batch_nary_sexp=databatch.batch_nary_sexp[train_indices],
-                            batch_bin_sexp=databatch.batch_bin_sexp[train_indices],
+                            # batch_nary_sexp=databatch.batch_nary_sexp[train_indices],
+                            # batch_bin_sexp=databatch.batch_bin_sexp[train_indices],
                             batch_arcs=databatch.batch_arcs[train_indices])
     dev_databatch = utils.DataBatch(
                             batch_edu_ids=databatch.batch_edu_ids[dev_indices],
@@ -35,8 +35,8 @@ def kfold(n_splits, split_id, databatch):
                             batch_edus_head=databatch.batch_edus_head[dev_indices],
                             batch_sbnds=databatch.batch_sbnds[dev_indices],
                             batch_pbnds=databatch.batch_pbnds[dev_indices],
-                            batch_nary_sexp=databatch.batch_nary_sexp[dev_indices],
-                            batch_bin_sexp=databatch.batch_bin_sexp[dev_indices],
+                            # batch_nary_sexp=databatch.batch_nary_sexp[dev_indices],
+                            # batch_bin_sexp=databatch.batch_bin_sexp[dev_indices],
                             batch_arcs=databatch.batch_arcs[dev_indices])
 
     utils.writelog("n_splits=%d" % n_splits)
