@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 
-STORAGE=/mnt/hdd/projects/discourse/DiscourseDependencyParsing-ArcFactoredModel/data
+STORAGE=/mnt/hdd/projects/discourse/PreprocessedDiscourseTreebanks/data
 
 mkdir ../data/ptbwsj_wo_rstdt.out
 

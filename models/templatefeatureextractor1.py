@@ -8,22 +8,22 @@ from utils import TemplateFeatureExtractor
 
 class TemplateFeatureExtractor1(TemplateFeatureExtractor):
 
-    def __init__(self, databatch, vocab_relation):
+    def __init__(self, dataset, vocab_relation):
         """
-        :type databatch: DataBatch
+        :type dataset: numpy.ndarray
         :type vocab_relation: {str: int}
         """
         super().__init__()
         self.LENGTH_SPANS = [(1,2), (3,5), (6,10), (11,20), (21,np.inf)]
         self.DISTANCE_SPANS = [(0,0), (1,2), (3,5), (6,np.inf)]
-        self.aggregate_templates(databatch=databatch, vocab_relation=vocab_relation)
+        self.aggregate_templates(dataset=dataset, vocab_relation=vocab_relation)
         self.prepare()
 
     ##########################
-    def build_ngrams(self, batch_edus, batch_arcs, vocab_relation, threshold):
+    def build_ngrams(self, dataset, attr_name, vocab_relation, threshold):
         """
-        :type batch_edus: list of list of list of str
-        :type batch_arcs: list of list of (int, int, str)
+        :type dataset: numpy.ndarray
+        :type attr_name: str
         :type vocab_relation: {str: int}
         :type threshold: float
         :rtype: list of (str, float), list of (str, float), {(str, str): int}, {(str, str): int}
@@ -31,8 +31,9 @@ class TemplateFeatureExtractor1(TemplateFeatureExtractor):
         # Counting
         counter_begin = Counter()
         counter_end = Counter()
-        prog_bar = pyprind.ProgBar(len(batch_edus))
-        for edus, arcs in zip(batch_edus, batch_arcs):
+        for data in pyprind.prog_bar(dataset):
+            edus = getattr(data, attr_name)
+            arcs = data.arcs
             ngrams_begin = [] # list of (str, str)
             ngrams_end = [] # list of (str, str)
             for h, d, l in arcs:
@@ -54,7 +55,6 @@ class TemplateFeatureExtractor1(TemplateFeatureExtractor):
                 ngrams_end.extend(part_ngrams_end)
             counter_begin.update(ngrams_begin)
             counter_end.update(ngrams_end)
-            prog_bar.update()
 
         ngram_list_begin = list(set([ngram for (ngram, relation) in counter_begin.keys()])) # list of str
         ngram_list_end = list(set([ngram for (ngram, relation) in counter_end.keys()])) # list of str
@@ -114,10 +114,10 @@ class TemplateFeatureExtractor1(TemplateFeatureExtractor):
             weights[symbol] = mi
         return weights
 
-    def build_heads(self, batch_edus_head, batch_arcs, vocab_relation, threshold):
+    def build_heads(self, dataset, attr_name, vocab_relation, threshold):
         """
-        :type batch_edus_head: list of list of (str, str, str)
-        :type batch_arcs: list of list of (int, int, str)
+        :type dataset: numpy.ndarray
+        :type attr_name: str
         :type vocab_relation: {str: int}
         :type threshold: float
         :rtype: list of (str, float), list of (str, float), list of (str, float), {(str, str): int}, {(str, str): int}, {(str, str): int}
@@ -126,8 +126,9 @@ class TemplateFeatureExtractor1(TemplateFeatureExtractor):
         counter_hw = Counter()
         counter_hp = Counter()
         counter_hr = Counter()
-        prog_bar = pyprind.ProgBar(len(batch_edus_head))
-        for edus_head, arcs in zip(batch_edus_head, batch_arcs):
+        for data in pyprind.prog_bar(dataset):
+            edus_head = getattr(data, attr_name)
+            arcs = data.arcs
             head_words = [] # list of (str, str)
             head_postags = [] # list of (str, str)
             head_relations = [] # list of (str, str)
@@ -147,7 +148,6 @@ class TemplateFeatureExtractor1(TemplateFeatureExtractor):
             counter_hw.update(head_words)
             counter_hp.update(head_postags)
             counter_hr.update(head_relations)
-            prog_bar.update()
 
         head_word_list = list(set([head_word for (head_word, relation) in counter_hw.keys()])) # list of str
         head_postag_list = list(set([head_postag for (head_postag, relation) in counter_hp.keys()])) # list of str
@@ -179,29 +179,29 @@ class TemplateFeatureExtractor1(TemplateFeatureExtractor):
     ##########################
 
     ##########################
-    def aggregate_templates(self, databatch, vocab_relation):
+    def aggregate_templates(self, dataset, vocab_relation):
         """
-        :type databatch: DataBatch
+        :type dataset: numpy.ndarray
         :type vocab_relation: {str: int}
         :rtype: None
         """
         ########################
         # lex_ngrams_begin, lex_ngrams_end, lex_counter_begin, lex_counter_end = \
         #         self.build_ngrams(
-        #                 batch_edus=databatch.batch_edus,
-        #                 batch_arcs=databatch.batch_arcs,
+        #                 dataset=dataset,
+        #                 attr_name="edus",
         #                 vocab_relation=vocab_relation,
         #                 threshold=2.85)
         # pos_ngrams_begin, pos_ngrams_end, pos_counter_begin, pos_counter_end = \
         #         self.build_ngrams(
-        #                 batch_edus=databatch.batch_edus_postag,
-        #                 batch_arcs=databatch.batch_arcs,
+        #                 dataset=dataset,
+        #                 attr_name="edus_postag",
         #                 vocab_relation=vocab_relation,
         #                 threshold=2.85)
         head_words, head_postags, head_relations, counter_hw, counter_hp, counter_hr = \
                 self.build_heads(
-                        batch_edus_head=databatch.batch_edus_head,
-                        batch_arcs=databatch.batch_arcs,
+                        dataset=dataset,
+                        attr_name="edus_head",
                         vocab_relation=vocab_relation,
                         threshold=2.85)
         ########################
