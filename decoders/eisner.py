@@ -1,5 +1,4 @@
 import numpy as np
-from chainer import cuda
 
 RIGHT = 0
 LEFT = 1
@@ -12,29 +11,24 @@ class IncrementalEisnerDecoder(object):
         self.decoder = EisnerDecoder()
 
     def decode(self,
-            model,
+            arc_scores,
             edu_ids,
-            edu_vectors,
-            same_sent_map,
             sbnds,
             pbnds,
             use_sbnds,
             use_pbnds,
             gold_heads=None):
         """
-        :type model: Model
+        :type arc_scores: numpy.ndarray(shape=(n_edus, n_edus), dtype="float")
         :type edu_ids: list of int
-        :type edu_vectors: Variable(shape=(n_edus, bilstm_dim + tempfeat1_dim), dtype=np.float32)
-        :type same_sent_map: numpy.ndarray(shape=(n_edus, n_edus), dtype=np.int32)
         :type sbnds: list of (int, int)
         :type pbnds: list of (int, int)
         :type use_sbnds: bool
         :type use_pbnds: bool
-        :type gold_heads: numpy.ndarray(shape=(n_edus,n_edus), dtype=np.int32)
+        :type gold_heads: numpy.ndarray(shape=(n_edus, n_edus), dtype=np.int32)
         :rtype: list of (int, int)
         """
         assert edu_ids[0] == 0 # NOTE
-        assert edu_vectors.shape[0] == len(edu_ids) # NOTE
 
         arcs = []
 
@@ -45,11 +39,9 @@ class IncrementalEisnerDecoder(object):
         if use_sbnds:
             target_bnds = sbnds
             sub_arcs, new_edu_ids = self.apply_decoder(
-                                                target_bnds=target_bnds,
-                                                model=model,
+                                                arc_scores=arc_scores,
                                                 edu_ids=new_edu_ids,
-                                                edu_vectors=edu_vectors,
-                                                same_sent_map=same_sent_map,
+                                                target_bnds=target_bnds,
                                                 gold_heads=gold_heads)
             arcs.extend(sub_arcs)
 
@@ -60,20 +52,16 @@ class IncrementalEisnerDecoder(object):
             else:
                 target_bnds = [(sbnds[b][0],sbnds[e][1]) for b,e in pbnds]
             sub_arcs, new_edu_ids = self.apply_decoder(
-                                                target_bnds=target_bnds,
-                                                model=model,
+                                                arc_scores=arc_scores,
                                                 edu_ids=new_edu_ids,
-                                                edu_vectors=edu_vectors,
-                                                same_sent_map=same_sent_map,
+                                                target_bnds=target_bnds,
                                                 gold_heads=gold_heads)
             arcs.extend(sub_arcs)
 
         # Document-level parsing
         sub_arcs, head = self.decoder.decode_without_root(
-                                                model=model,
+                                                arc_scores=arc_scores,
                                                 edu_ids=new_edu_ids,
-                                                edu_vectors=edu_vectors,
-                                                same_sent_map=same_sent_map,
                                                 gold_heads=gold_heads)
         arcs.extend(sub_arcs)
 
@@ -83,19 +71,15 @@ class IncrementalEisnerDecoder(object):
         return arcs
 
     def apply_decoder(self,
-                    target_bnds,
-                    model,
+                    arc_scores,
                     edu_ids,
-                    edu_vectors,
-                    same_sent_map,
+                    target_bnds,
                     gold_heads):
         """
+        :type arc_scores: numpy.ndarray(shape=(n_edus, n_edus), dtype="float")
+        :type edu_ids: list of int
         :type target_bnds: list of (int, int)
-        :type model: Model
-        :type edu_ids: list of int (length=n_edus)
-        :type edu_vectors: Variable(shape=(n_edus*, bilstm_dim + tempfeat1_dim), dtype=np.float32)
-        :type same_sent_map: numpy.ndarray(shape=(n_edus*, n_edus*), dtype=np.int32)
-        :type gold_heads: numpy.ndarray(shape=(n_edus*, n_edus*), dtype=np.int32)
+        :type gold_heads: numpy.ndarray(shape=(n_edus, n_edus), dtype=np.int32)
         :rtype: list of (int, int), list of int
         """
         arcs = [] # list of (int, int)
@@ -107,10 +91,8 @@ class IncrementalEisnerDecoder(object):
                 head = edu_ids[begin_i]
             else:
                 sub_arcs, head = self.decoder.decode_without_root(
-                                                    model=model,
+                                                    arc_scores=arc_scores,
                                                     edu_ids=edu_ids[begin_i:end_i+1],
-                                                    edu_vectors=edu_vectors,
-                                                    same_sent_map=same_sent_map,
                                                     gold_heads=gold_heads)
             arcs.extend(sub_arcs)
             new_edu_ids.append(head)
@@ -122,46 +104,35 @@ class EisnerDecoder(object):
         pass
 
     def decode(self,
-            model,
+            arc_scores,
             edu_ids,
-            edu_vectors,
-            same_sent_map,
             gold_heads=None):
         """
-        :type model: Model
-        :type edu_ids: list of int (length=n_edus)
-        :type edu_vectors: Variable(shape=(n_edus, bilstm_dim + tempfeat1_dim), dtype=np.float32)
-        :type same_sent_map: numpy.ndarray(shape=(n_edus, n_edus), dtype=np.int32)
+        :type arc_scores: numpy.ndarray(shape=(n_edus, n_edus), dtype="float")
+        :type edu_ids: list of int
         :type gold_heads: numpy.ndarray(shape=(n_edus, n_edus), dtype=np.int32)
         :rtype: list of (int, int)
         """
-        assert edu_ids[0] == 0 # NOTE
-        assert edu_vectors.shape[0] == len(edu_ids) # NOTE
-
-        # Precompute arc scores to avoid redundant calculation
-        arc_scores = self.precompute_arc_scores(model=model,
-                                                edu_ids=edu_ids,
-                                                edu_vectors=edu_vectors,
-                                                same_sent_map=same_sent_map)
+        assert edu_ids[0] == 0 # NOTE: Including the Root
 
         # Initialize charts
         chart = {} # {(int, int, int, int): float}
         back_ptr = {} # {(int, int, int, int): float}
 
-        n_edus = len(edu_ids)
+        length = len(edu_ids)
 
         # Base case
-        for i in range(n_edus):
+        for i in range(length):
             chart[i, i, LEFT, COMPLETE] = 0.0
             chart[i, i, RIGHT, COMPLETE] = 0.0
             chart[i, i, LEFT, INCOMPLETE] = 0.0
             chart[i, i, RIGHT, INCOMPLETE] = 0.0
-        for i in range(n_edus):
+        for i in range(length):
             chart[0, i, LEFT, INCOMPLETE] = -np.inf
 
         # General case (without ROOT)
-        for d in range(1, n_edus):
-            for i1 in range(1, n_edus - d): # NOTE
+        for d in range(1, length):
+            for i1 in range(1, length - d): # NOTE
                 i3 = i1 + d
 
                 # Incomplete span
@@ -223,72 +194,62 @@ class EisnerDecoder(object):
                 back_ptr[i1, i3, RIGHT, COMPLETE] = memo
 
         # ROOT attachment
-        # arcs = self.recover_tree(back_ptr, 0, n_edus-1, RIGHT, COMPLETE, arcs=None) # NOTE
+        # arcs = self.recover_tree(back_ptr, 0, length-1, RIGHT, COMPLETE, arcs=None) # NOTE
         max_score = -np.inf
         memo = None
-        for i2 in range(1, n_edus):
+        for i2 in range(1, length):
             arc_score = arc_scores[edu_ids[0], edu_ids[i2]]
             score = arc_score \
                     + chart[0, 0, RIGHT, COMPLETE] \
                     + chart[1, i2, LEFT, COMPLETE] \
-                    + chart[i2, n_edus-1, RIGHT, COMPLETE]
+                    + chart[i2, length-1, RIGHT, COMPLETE]
             if max_score < score:
                 max_score = score
                 memo = i2
-        chart[0, n_edus-1, RIGHT, COMPLETE] = max_score
-        back_ptr[0, n_edus-1, RIGHT, COMPLETE] = memo
+        chart[0, length-1, RIGHT, COMPLETE] = max_score
+        back_ptr[0, length-1, RIGHT, COMPLETE] = memo
         head = memo
 
         # Recovering dependency arcs
         arcs = [(0, head)]
         arcs = self.recover_tree(back_ptr, 1, head, LEFT, COMPLETE, arcs=arcs)
-        arcs = self.recover_tree(back_ptr, head, n_edus-1, RIGHT, COMPLETE, arcs=arcs)
+        arcs = self.recover_tree(back_ptr, head, length-1, RIGHT, COMPLETE, arcs=arcs)
 
         # Shifting: local position -> global position
         arcs = [(edu_ids[h], edu_ids[d]) for h,d in arcs]
         return arcs
 
     def decode_without_root(self,
-                            model,
+                            arc_scores,
                             edu_ids,
-                            edu_vectors,
-                            same_sent_map,
                             gold_heads=None):
         """
-        :type model: Model
-        :type edu_ids: list of int (length=n_edus)
-        :type edu_vectors: Variable(shape=(n_edus*, bilstm_dim + tempfeat1_dim), dtype=np.float32)
-        :type same_sent_map: numpy.ndarray(shape=(n_edus*, n_edus*), dtype=np.int32)
-        :type gold_heads: numpy.ndarray(shape=(n_edus*, n_edus*), dtype=np.int32)
+        :type arc_scores: numpy.ndarray(shape=(n_edus, n_edus), dtype="float")
+        :type edu_ids: list of int
+        :type gold_heads: numpy.ndarray(shape=(n_edus, n_edus), dtype=np.int32)
         :rtype: list of (int, int)
         """
-        assert edu_ids[0] != 0 # NOTE
+        assert edu_ids[0] != 0 # NOTE: Without the Root
 
         if len(edu_ids) == 1:
             return [], edu_ids[0]
-
-        # Precompute arc scores to avoid redundant calculation
-        arc_scores = self.precompute_arc_scores(model=model,
-                                                edu_ids=edu_ids,
-                                                edu_vectors=edu_vectors,
-                                                same_sent_map=same_sent_map)
 
         # Initialize charts
         chart = {} # {(int, int, int, int): float}
         back_ptr = {} # {(int, int, int, int): float}
 
-        n_edus = len(edu_ids)
+        length = len(edu_ids)
 
         # Base case
-        for i in range(n_edus):
+        for i in range(length):
             chart[i, i, LEFT, COMPLETE] = 0.0
             chart[i, i, RIGHT, COMPLETE] = 0.0
             chart[i, i, LEFT, INCOMPLETE] = 0.0
             chart[i, i, RIGHT, INCOMPLETE] = 0.0
 
         # General case
-        for d in range(1, n_edus):
-            for i1 in range(0, n_edus - d): # NOTE: index "0" does NOT represent ROOT
+        for d in range(1, length):
+            for i1 in range(0, length - d): # NOTE: index "0" does NOT represent ROOT
                 i3 = i1 + d
 
                 # Incomplete span
@@ -352,9 +313,9 @@ class EisnerDecoder(object):
         # ROOT identification
         max_score = -np.inf
         memo = None
-        for i2 in range(0, n_edus):
+        for i2 in range(0, length):
             score = chart[0, i2, LEFT, COMPLETE] \
-                    + chart[i2, n_edus-1, RIGHT, COMPLETE]
+                    + chart[i2, length-1, RIGHT, COMPLETE]
             if max_score < score:
                 max_score = score
                 memo = i2
@@ -362,7 +323,7 @@ class EisnerDecoder(object):
 
         # Recovering dependency arcs
         arcs = self.recover_tree(back_ptr, 0, head, LEFT, COMPLETE, arcs=None)
-        arcs = self.recover_tree(back_ptr, head, n_edus-1, RIGHT, COMPLETE, arcs=arcs)
+        arcs = self.recover_tree(back_ptr, head, length-1, RIGHT, COMPLETE, arcs=arcs)
 
         # Shifting: local position -> global position
         arcs = [(edu_ids[h], edu_ids[d]) for h,d in arcs]
@@ -403,42 +364,4 @@ class EisnerDecoder(object):
                 arcs = self.recover_tree(back_ptr, i1, i2, RIGHT, COMPLETE, arcs=arcs)
                 arcs = self.recover_tree(back_ptr, i2+1, i3, LEFT, COMPLETE, arcs=arcs)
         return arcs
-
-    def precompute_arc_scores(self, model, edu_ids, edu_vectors, same_sent_map):
-        """
-        :type model: Model
-        :type edu_ids: list of int (length=n_edus)
-        :type edu_vectors: Variable(shape=(n_edus*, bilstm_dim + tempfeat1_dim), dtype=np.float32)
-        :type same_sent_map: numpy.ndarray(shape=(n_edus*, n_edus*), dtype=np.int32)
-        :rtype: {(int, int): float}
-        """
-        result = {} # {(int, int): float}
-
-        n_edus = len(edu_ids)
-
-        # Aggregating patterns
-        arcs = []
-        for h in range(0, n_edus):
-            for d in range(0, n_edus):
-                if h == d:
-                    continue
-                arc = (h, d)
-                if arc in arcs:
-                    continue
-                arcs.append(arc)
-
-        # Shifting: local position -> global position
-        arcs = [(edu_ids[h], edu_ids[d]) for h,d in arcs]
-
-        # Scoring
-        arc_scores = model.forward_arcs_for_attachment(
-                                edu_vectors=edu_vectors,
-                                same_sent_map=same_sent_map,
-                                batch_arcs=[arcs],
-                                aggregate=False) # (1, n_arcs, 1)
-        arc_scores = cuda.to_cpu(arc_scores.data)[0] # (n_arcs, 1)
-        for arc_i, arc in enumerate(arcs):
-            result[arc] = float(arc_scores[arc_i])
-
-        return result
 

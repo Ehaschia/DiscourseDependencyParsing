@@ -187,6 +187,7 @@ def main(args):
             else:
                 # Training with the full training set
                 dev_dataset = None
+
             train(
                 model=model,
                 decoder=decoder,
@@ -219,7 +220,7 @@ def main(args):
             utils.write_json(path_eval, scores)
             utils.writelog(utils.pretty_format_dict(scores))
 
-    utils.writelog("Done.")
+    utils.writelog("Done: %s" % basename)
 
 def train(model,
           decoder,
@@ -340,11 +341,14 @@ def train(model,
                     # Positive
                     pos_arcs = [(h,d) for h,d,l in gold_arcs] # list of (int, int)
                     # Negative
-                    neg_arcs = decoder.decode(
+                    arc_scores = precompute_all_arc_scores(
                                         model=model,
                                         edu_ids=edu_ids,
                                         edu_vectors=edu_vectors,
-                                        same_sent_map=same_sent_map,
+                                        same_sent_map=same_sent_map)
+                    neg_arcs = decoder.decode(
+                                        arc_scores=arc_scores,
+                                        edu_ids=edu_ids,
                                         sbnds=sbnds,
                                         pbnds=pbnds,
                                         use_sbnds=True,
@@ -496,11 +500,14 @@ def parse(model, decoder, dataset, path_pred):
             same_sent_map = models.make_same_sent_map(edus=edus, sbnds=sbnds) # (n_edus, n_edus)
 
             # Parsing (attachment)
-            unlabeled_arcs = decoder.decode(
+            arc_scores = precompute_all_arc_scores(
                                 model=model,
                                 edu_ids=edu_ids,
                                 edu_vectors=edu_vectors,
-                                same_sent_map=same_sent_map,
+                                same_sent_map=same_sent_map)
+            unlabeled_arcs = decoder.decode(
+                                arc_scores=arc_scores,
+                                edu_ids=edu_ids,
                                 sbnds=sbnds,
                                 pbnds=pbnds,
                                 use_sbnds=True,
@@ -519,6 +526,41 @@ def parse(model, decoder, dataset, path_pred):
             dtree = treetk.arcs2dtree(arcs=labeled_arcs)
             labeled_arcs = ["%s-%s-%s" % (x[0],x[1],x[2]) for x in dtree.tolist()]
             f.write("%s\n" % " ".join(labeled_arcs))
+
+def precompute_all_arc_scores(model, edu_ids, edu_vectors, same_sent_map):
+    """
+    :type model: ArcFactoredModel
+    :type edu_ids: list of int (length=n_edus)
+    :type edu_vectors: Variable(shape=(n_edus*, bilstm_dim + tempfeat1_dim), dtype=np.float32)
+    :type same_sent_map: numpy.ndarray(shape=(n_edus*, n_edus*), dtype=np.int32)
+    :rtype: numpy.ndarray(shape=(n_edus, n_edus), dtype="float")
+    """
+    n_edus = len(edu_ids)
+
+    result = np.zeros((n_edus, n_edus), dtype="float")
+
+    # Aggregating patterns
+    arcs = []
+    for h in range(0, n_edus):
+        for d in range(0, n_edus):
+            if h == d:
+                continue
+            arc = (h, d)
+            arcs.append(arc)
+
+    # Shifting: local position -> global position
+    arcs = [(edu_ids[h], edu_ids[d]) for h,d in arcs]
+
+    # Scoring
+    arc_scores = model.forward_arcs_for_attachment(
+                                edu_vectors=edu_vectors,
+                                same_sent_map=same_sent_map,
+                                batch_arcs=[arcs],
+                                aggregate=False) # (1, n_arcs, 1)
+    arc_scores = cuda.to_cpu(arc_scores.data)[0] # (n_arcs, 1)
+    for arc_i, (h, d) in enumerate(arcs):
+        result[h,d] = float(arc_scores[arc_i])
+    return result
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
