@@ -93,7 +93,6 @@ def main(args):
     vocab_postag = utils.read_vocab(os.path.join(config.getpath("data"), "rstdt-vocab", "postags.vocab.txt"))
     vocab_deprel = utils.read_vocab(os.path.join(config.getpath("data"), "rstdt-vocab", "deprels.vocab.txt"))
     vocab_relation = utils.read_vocab(os.path.join(config.getpath("data"), "rstdt-vocab", "relations.coarse.vocab.txt"))
-    # vocab_nuclearity = utils.read_vocab(os.path.join(config.getpath("data"), "rstdt-vocab", "nuclearities.vocab.txt"))
 
     end_time = time.time()
     utils.writelog("Loaded the corpus. %f [sec.]" % (end_time - begin_time))
@@ -373,7 +372,7 @@ def train(model,
                 # Attachment Loss
                 loss_attachment += F.clip(pred_scores[1] + margin - pred_scores[0], 0.0, 10000000.0)
 
-                # Ranked Accuracy
+                # Ranking Accuracy
                 pred_scores = F.reshape(pred_scores, (1, 1+1)) # (1, 1+1)
                 gold_scores = np.zeros((1,), dtype=np.int32) # (1,)
                 gold_scores = utils.convert_ndarray_to_variable(gold_scores, seq=False) # (1,)
@@ -413,7 +412,7 @@ def train(model,
                    "progress": "%d/%d" % (inst_i+actual_batchsize, n_train),
                    "progress_ratio": float(inst_i+actual_batchsize)/n_train*100.0,
                    "Attachment Loss": loss_attachment_data,
-                   "Ranked Accuracy": acc_attachment_data * 100.0,
+                   "Ranking Accuracy": acc_attachment_data * 100.0,
                    "Relation Loss": loss_relation_data,
                    "Relation Accuracy": acc_relation_data * 100.0}
             writer_train.write(out)
