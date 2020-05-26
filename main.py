@@ -52,7 +52,7 @@ def main(args):
     path_train = os.path.join(config.getpath("results"), basename + ".training.jsonl")
     path_valid = os.path.join(config.getpath("results"), basename + ".validation.jsonl")
     path_snapshot = os.path.join(config.getpath("results"), basename + ".model")
-    path_pred = os.path.join(config.getpath("results"), basename + ".evaluation.ctrees")
+    path_pred = os.path.join(config.getpath("results"), basename + ".evaluation.arcs")
     path_eval = os.path.join(config.getpath("results"), basename + ".evaluation.json")
 
     utils.set_logger(path_log)
