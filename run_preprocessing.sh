@@ -37,7 +37,7 @@ python ./preprocessing/extract_deprels_from_arcs.py --path ${STORAGE}/rstdt/wsj/
 python ./preprocessing/extract_deprels_from_arcs.py --path ${STORAGE}/rstdt/wsj/test
 python ./preprocessing/extract_deprels_from_arcs.py --path ${STORAGE}/ptbwsj_wo_rstdt
 
-# Step 7 (RST-DT, PTB-WSJ): Preprocessing : wsj_xxxx.edus.tokens.preprocessed, {words,postags,deprels}.vocab.txt
+# Step 7 (RST-DT, PTB-WSJ): Preprocessing: wsj_xxxx.edus.tokens.preprocessed, {words,postags,deprels}.vocab.txt
 python ./preprocessing/preprocess_tokens.py --files ${STORAGE}/rstdt/wsj/train/*.edus.tokens
 python ./preprocessing/preprocess_tokens.py --files ${STORAGE}/rstdt/wsj/test/*.edus.tokens
 python ./preprocessing/preprocess_tokens.py --files ${STORAGE}/ptbwsj_wo_rstdt/*.edus.tokens

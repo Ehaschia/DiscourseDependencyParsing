@@ -236,7 +236,7 @@ def train(model,
           path_pred,
           path_gold):
     """
-    :type model: Model
+    :type model: ArcFactoredModel
     :type decoder: IncrementalEisnerDecoder
     :type max_epoch: int
     :type batch_size: int
@@ -477,7 +477,7 @@ def compute_tree_distance(arcs1, arcs2, coef):
 
 def parse(model, decoder, dataset, path_pred):
     """
-    :type model: Model
+    :type model: ArcFactoredModel
     :type decoder: IncrementalEisnerDecoder
     :type dataset: numpy.ndarray
     :type path_pred: str
