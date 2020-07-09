@@ -1,0 +1,17 @@
+ATTRIBUTION attribution
+BACKGROUND bg-compare bg-goal bg-general
+CAUSE-EFFECT cause result
+COMPARISON comparison
+CONDITION condition
+CONTRAST contrast
+ELABORATION elab-addition elab-aspect elab-process_step elab-definition elab-enum_member elab-example
+ENABLEMENT enablement
+EVALUATION evaluation
+EXPLAIN exp-evidence exp-reason
+JOINT joint
+MANNER-MEANS manner-means
+PROGRESSION progression
+SAME-UNIT same-unit
+SUMMARY summary
+TEMPORAL temporal
+<root> <root>

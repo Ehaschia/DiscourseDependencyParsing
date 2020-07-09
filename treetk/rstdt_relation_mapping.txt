@@ -1,0 +1,19 @@
+ATTRIBUTION attribution attribution-e attribution-n
+BACKGROUND background background-e circumstance circumstance-e
+CAUSE cause result result-e Cause-Result consequence-n consequence-n-e consequence-s consequence-s-e Consequence
+COMPARISON comparison comparison-e Comparison preference preference-e analogy analogy-e Analogy Proportion
+CONDITION condition condition-e hypothetical contingency otherwise Otherwise
+CONTRAST Contrast concession concession-e antithesis antithesis-e
+ELABORATION elaboration-additional elaboration-additional-e elaboration-general-specific elaboration-general-specific-e elaboration-part-whole elaboration-part-whole-e elaboration-process-step elaboration-process-step-e elaboration-object-attribute elaboration-object-attribute-e elaboration-set-member elaboration-set-member-e example example-e definition definition-e
+ENABLEMENT purpose purpose-e enablement enablement-e
+EVALUATION evaluation-n evaluation-s evaluation-s-e Evaluation interpretation-n interpretation-s interpretation-s-e Interpretation conclusion Conclusion comment comment-e
+EXPLANATION evidence evidence-e explanation-argumentative explanation-argumentative-e reason reason-e Reason
+JOINT List Disjunction
+MANNER-MEANS manner manner-e means means-e
+TOPIC-COMMENT problem-solution-n problem-solution-s Problem-Solution question-answer-n question-answer-s Question-Answer statement-response-n statement-response-s Statement-Response Topic-Comment Comment-Topic rhetorical-question
+SUMMARY summary-n summary-s restatement restatement-e
+TEMPORAL temporal-before temporal-before-e temporal-after temporal-after-e temporal-same-time temporal-same-time-e Temporal-Same-Time Sequence Inverted-Sequence
+TOPIC-CHANGE topic-shift Topic-Shift topic-drift Topic-Drift
+TEXTUAL-ORGANIZATION TextualOrganization
+SAME-UNIT Same-Unit
+<root> <root>
