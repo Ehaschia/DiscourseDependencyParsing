@@ -4,10 +4,13 @@ import time
 
 import jsonlines
 import numpy as np
-import chainer
-import chainer.functions as F
-from chainer import cuda, optimizers, serializers
+# import chainer
+# import chainer.functions as F
+# from chainer import cuda, optimizers, serializers
 import pyprind
+import torch
+import torch.optim as optimizers
+import torch.nn.functional as F
 
 import utils
 import treetk
@@ -16,6 +19,7 @@ import dataloader
 import models
 import decoders
 import metrics
+
 
 def main(args):
     ##################
@@ -62,7 +66,10 @@ def main(args):
     random_seed = trial_name
     random_seed = utils.hash_string(random_seed)
     np.random.seed(random_seed)
-    cuda.cupy.random.seed(random_seed)
+    torch.manual_seed(random_seed)
+    torch.cuda.manual_seed(random_seed)
+    torch.cuda.manual_seed_all(random_seed)
+    # cuda.cupy.random.seed(random_seed)
 
     ##################
     # Log so far
@@ -87,12 +94,13 @@ def main(args):
     # Data preparation
     begin_time = time.time()
 
-    train_dataset = dataloader.read_rstdt("train", relation_level="coarse-grained", with_root=True)
-    test_dataset = dataloader.read_rstdt("test", relation_level="coarse-grained", with_root=True)
-    vocab_word = utils.read_vocab(os.path.join(config.getpath("data"), "rstdt-vocab", "words.vocab.txt"))
-    vocab_postag = utils.read_vocab(os.path.join(config.getpath("data"), "rstdt-vocab", "postags.vocab.txt"))
-    vocab_deprel = utils.read_vocab(os.path.join(config.getpath("data"), "rstdt-vocab", "deprels.vocab.txt"))
-    vocab_relation = utils.read_vocab(os.path.join(config.getpath("data"), "rstdt-vocab", "relations.coarse.vocab.txt"))
+    train_dataset = dataloader.read_scidtb("train", "", relation_level="coarse-grained")
+    test_dataset = dataloader.read_scidtb("test", "gold", relation_level="coarse-grained")
+    dev_dataset = dataloader.read_scidtb("dev", "gold", relation_level="coarse-grained")
+    vocab_word = utils.read_vocab(os.path.join(config.getpath("data"), "scidtb-vocab", "words.vocab.txt"))
+    vocab_postag = utils.read_vocab(os.path.join(config.getpath("data"), "scidtb-vocab", "postags.vocab.txt"))
+    vocab_deprel = utils.read_vocab(os.path.join(config.getpath("data"), "scidtb-vocab", "deprels.vocab.txt"))
+    vocab_relation = utils.read_vocab(os.path.join(config.getpath("data"), "scidtb-vocab", "relations.coarse.vocab.txt"))
 
     end_time = time.time()
     utils.writelog("Loaded the corpus. %f [sec.]" % (end_time - begin_time))
@@ -121,7 +129,8 @@ def main(args):
 
     ##################
     # Model preparation
-    cuda.get_device(gpu).use()
+    # cuda.get_device(gpu).use()
+    device = torch.device('cuda')
 
     # Initialize a model
     initialW = utils.read_word_embedding_matrix(
@@ -155,17 +164,18 @@ def main(args):
                         mlp_dim=mlp_dim,
                         initialW=initialW,
                         template_feature_extractor1=template_feature_extractor1,
-                        template_feature_extractor2=template_feature_extractor2)
+                        template_feature_extractor2=template_feature_extractor2,
+                        device=device)
+        model.to(device)
     else:
         raise ValueError("Invalid model_name=%s" % model_name)
     utils.writelog("Initialized the model ``%s''" % model_name)
 
     # Load pre-trained parameters
     if actiontype != "train":
-        serializers.load_npz(path_snapshot, model)
+        # serializers.load_npz(path_snapshot, model)
+        model.load_state_dict(torch.load(path_snapshot))
         utils.writelog("Loaded trained parameters from %s" % path_snapshot)
-
-    model.to_gpu(gpu)
 
     ##################
     # Decoder preparation
@@ -174,37 +184,38 @@ def main(args):
     ##################
     # Training / evaluation
     if actiontype == "train":
-        with chainer.using_config("train", True):
-            if dev_size > 0:
-                # Training with cross validation
-                train_dataset, dev_dataset = utils.split_dataset(dataset=train_dataset, n_dev=dev_size, seed=None)
-                with open(os.path.join(config.getpath("results"), basename + ".valid_gold.arcs"), "w") as f:
-                    for data in dev_dataset:
-                        arcs = data.arcs
-                        arcs = ["%s-%s-%s" % (h,d,r) for (h,d,r) in arcs]
-                        f.write("%s\n" % " ".join(arcs))
-            else:
-                # Training with the full training set
-                dev_dataset = None
+        model.train()
+        if dev_size > 0:
+            # Training with cross validation
+            train_dataset, dev_dataset = utils.split_dataset(dataset=train_dataset, n_dev=dev_size, seed=None)
+            with open(os.path.join(config.getpath("results"), basename + ".valid_gold.arcs"), "w") as f:
+                for data in dev_dataset:
+                    arcs = data.arcs
+                    arcs = ["%s-%s-%s" % (h,d,r) for (h,d,r) in arcs]
+                    f.write("%s\n" % " ".join(arcs))
+        else:
+            # Training with the full training set
+            dev_dataset = None
 
-            train(
-                model=model,
-                decoder=decoder,
-                max_epoch=max_epoch,
-                batch_size=batch_size,
-                weight_decay=weight_decay,
-                gradient_clipping=gradient_clipping,
-                optimizer_name=optimizer_name,
-                train_dataset=train_dataset,
-                dev_dataset=dev_dataset,
-                path_train=path_train,
-                path_valid=path_valid,
-                path_snapshot=path_snapshot,
-                path_pred=os.path.join(config.getpath("results"), basename + ".valid_pred.arcs"),
-                path_gold=os.path.join(config.getpath("results"), basename + ".valid_gold.arcs"))
+        train(
+            model=model,
+            decoder=decoder,
+            max_epoch=max_epoch,
+            batch_size=batch_size,
+            weight_decay=weight_decay,
+            gradient_clipping=gradient_clipping,
+            optimizer_name=optimizer_name,
+            train_dataset=train_dataset,
+            dev_dataset=dev_dataset,
+            path_train=path_train,
+            path_valid=path_valid,
+            path_snapshot=path_snapshot,
+            path_pred=os.path.join(config.getpath("results"), basename + ".valid_pred.arcs"),
+            path_gold=os.path.join(config.getpath("results"), basename + ".valid_gold.arcs"))
 
     elif actiontype == "evaluate":
-        with chainer.using_config("train", False), chainer.no_backprop_mode():
+        model.eval()
+        with torch.no_grad():
             # Test
             parse(
                 model=model,
@@ -213,13 +224,14 @@ def main(args):
                 path_pred=path_pred)
             scores = metrics.attachment_scores(
                         pred_path=path_pred,
-                        gold_path=os.path.join(config.getpath("data"), "rstdt", "wsj", "test", "gold.arcs"))
+                        gold_path=os.path.join(config.getpath("data"), "scidtb", "preprocessed", "test", "gold", "gold.arcs"))
             scores["LAS"] *= 100.0
             scores["UAS"] *= 100.0
             utils.write_json(path_eval, scores)
             utils.writelog(utils.pretty_format_dict(scores))
 
     utils.writelog("Done: %s" % basename)
+
 
 def train(model,
           decoder,
@@ -257,17 +269,14 @@ def train(model,
         writer_valid = jsonlines.Writer(open(path_valid, "w"), flush=True)
 
     # Optimizer preparation
+    parameters_need_update = filter(lambda p: p.requires_grad, model.parameters())
     if optimizer_name == "adam":
-        opt = optimizers.Adam()
+        opt = optimizers.Adam(parameters_need_update, weight_decay=weight_decay)
     else:
         raise ValueError("Invalid optimizer_name=%s" % optimizer_name)
 
-    opt.setup(model)
-
-    if weight_decay > 0.0:
-        opt.add_hook(chainer.optimizer.WeightDecay(weight_decay))
-    if gradient_clipping > 0.0:
-        opt.add_hook(chainer.optimizer.GradientClipping(gradient_clipping))
+    # if gradient_clipping > 0.0:
+    #     opt.add_hook(chainer.optimizer.GradientClipping(gradient_clipping))
 
     n_train = len(train_dataset)
     it = 0
@@ -276,7 +285,8 @@ def train(model,
 
     if dev_dataset is not None:
         # Initial validation
-        with chainer.using_config("train", False), chainer.no_backprop_mode():
+        model.eval()
+        with torch.no_grad():
             parse(
                 model=model,
                 decoder=decoder,
@@ -292,12 +302,14 @@ def train(model,
             utils.writelog(utils.pretty_format_dict(scores))
         # Saving
         bestscore_holder.compare_scores(scores["LAS"], 0)
-        serializers.save_npz(path_snapshot, model)
+        torch.save(model.state_dict(), path_snapshot)
         utils.writelog("Saved the model to %s" % path_snapshot)
     else:
         # Saving
-        serializers.save_npz(path_snapshot, model)
+        torch.save(model.state_dict(), path_snapshot)
         utils.writelog("Saved the model to %s" % path_snapshot)
+
+    model.train()
 
     for epoch in range(1, max_epoch+1):
 
@@ -336,7 +348,8 @@ def train(model,
                 gold_heads = -np.ones((len(edus),), dtype=np.int32)
                 for h,d,l in gold_arcs:
                     gold_heads[d] = h
-                with chainer.using_config("train", False), chainer.no_backprop_mode():
+                # TODO here need torch.eval() or not?
+                with torch.no_grad():
                     # Positive
                     pos_arcs = [(h,d) for h,d,l in gold_arcs] # list of (int, int)
                     # Negative
@@ -370,21 +383,24 @@ def train(model,
                 pred_relations = pred_relations[0] # (n_arcs, n_relations)
 
                 # Attachment Loss
-                loss_attachment += F.clip(pred_scores[1] + margin - pred_scores[0], 0.0, 10000000.0)
+                loss_attachment += torch.clamp(pred_scores[1] + margin - pred_scores[0], 0.0, 10000000.0)
 
                 # Ranking Accuracy
-                pred_scores = F.reshape(pred_scores, (1, 1+1)) # (1, 1+1)
-                gold_scores = np.zeros((1,), dtype=np.int32) # (1,)
-                gold_scores = utils.convert_ndarray_to_variable(gold_scores, seq=False) # (1,)
-                acc_attachment += F.accuracy(pred_scores, gold_scores)
+                pred_scores = torch.reshape(pred_scores, (1, 1+1)) # (1, 1+1)
+                gold_labels = np.zeros((1,), dtype=np.int32) # (1,)
+                pred_labels = torch.argmax(pred_scores, dim=-1).cpu().numpy()
+                acc_attachment += np.sum(np.equal(pred_labels, gold_labels))
 
                 # Relation Loss/Accuracy
                 gold_relations = [l for h,d,l in gold_arcs] # list of str
                 gold_relations = [model.vocab_relation[r] for r in gold_relations] # list of int
                 gold_relations = np.asarray(gold_relations, dtype=np.int32) # (n_arcs,)
-                gold_relations = utils.convert_ndarray_to_variable(gold_relations, seq=False) # (n_arcs,)
-                loss_relation += F.softmax_cross_entropy(pred_relations, gold_relations) * float(len(gold_relations))
-                acc_relation += F.accuracy(pred_relations, gold_relations) * float(len(gold_relations))
+                # gold_relations = utils.convert_ndarray_to_variable(gold_relations, seq=False) # (n_arcs,)
+                loss_relation += F.cross_entropy(pred_relations,
+                                                 torch.tensor(gold_relations).long().to(pred_relations.device),
+                                                 reduction='mean') * float(len(gold_relations))
+                pred_labels = torch.argmax(pred_scores, dim=-1).cpu().numpy()
+                acc_relation += np.sum(np.equal(pred_labels, gold_relations)) * float(len(gold_relations))
 
                 actual_batchsize += 1
                 actual_total_arcs += len(gold_relations)
@@ -397,16 +413,16 @@ def train(model,
             loss_relation = loss_relation / actual_total_arcs
             acc_relation = acc_relation / actual_total_arcs
             loss = loss_attachment + loss_relation
-            model.zerograds()
             loss.backward()
-            opt.update()
+            opt.step()
+            opt.zero_grad()
             it += 1
 
             # Write log
-            loss_attachment_data = float(cuda.to_cpu(loss_attachment.data))
-            acc_attachment_data = float(cuda.to_cpu(acc_attachment.data))
-            loss_relation_data = float(cuda.to_cpu(loss_relation.data))
-            acc_relation_data = float(cuda.to_cpu(acc_relation.data))
+            loss_attachment_data = loss_attachment.item()
+            acc_attachment_data = acc_attachment.item()
+            loss_relation_data = loss_relation.item()
+            acc_relation_data = acc_relation.item()
             out = {"iter": it,
                    "epoch": epoch,
                    "progress": "%d/%d" % (inst_i+actual_batchsize, n_train),
@@ -420,7 +436,8 @@ def train(model,
 
         if dev_dataset is not None:
            # Validation
-            with chainer.using_config("train", False), chainer.no_backprop_mode():
+            model.eval()
+            with torch.no_grad():
                 parse(
                     model=model,
                     decoder=decoder,
@@ -437,7 +454,7 @@ def train(model,
             # Saving
             did_update = bestscore_holder.compare_scores(scores["LAS"], epoch)
             if did_update:
-                serializers.save_npz(path_snapshot, model)
+                torch.save(model.state_dict(), path_snapshot)
                 utils.writelog("Saved the model to %s" % path_snapshot)
             # Finished?
             if bestscore_holder.ask_finishing(max_patience=10):
@@ -449,8 +466,9 @@ def train(model,
         else:
             # No validation
             # Saving
-            serializers.save_npz(path_snapshot, model)
+            torch.save(model.state_dict(), path_snapshot)
             # We continue training until it reaches the maximum number of epochs.
+
 
 def compute_tree_distance(arcs1, arcs2, coef):
     """
@@ -474,6 +492,7 @@ def compute_tree_distance(arcs1, arcs2, coef):
             dist += 1.0
     dist = coef * dist
     return dist
+
 
 def parse(model, decoder, dataset, path_pred):
     """
@@ -517,7 +536,7 @@ def parse(model, decoder, dataset, path_pred):
                                     edu_vectors=edu_vectors,
                                     same_sent_map=same_sent_map,
                                     batch_arcs=[unlabeled_arcs]) # (1, n_arcs, n_labels)
-            logits_rel = cuda.to_cpu(logits_rel.data)[0] # (n_spans, n_relations)
+            logits_rel = logits_rel.cpu().numpy()[0] # (n_spans, n_relations)
             relations = np.argmax(logits_rel, axis=1) # (n_spans,)
             relations = [model.ivocab_relation[r] for r in relations] # list of str
             labeled_arcs = [(h,d,r) for (h,d),r in zip(unlabeled_arcs, relations)] # list of (int, int, str)
@@ -525,6 +544,7 @@ def parse(model, decoder, dataset, path_pred):
             dtree = treetk.arcs2dtree(arcs=labeled_arcs)
             labeled_arcs = ["%s-%s-%s" % (x[0],x[1],x[2]) for x in dtree.tolist()]
             f.write("%s\n" % " ".join(labeled_arcs))
+
 
 def precompute_all_arc_scores(model, edu_ids, edu_vectors, same_sent_map):
     """
@@ -556,10 +576,11 @@ def precompute_all_arc_scores(model, edu_ids, edu_vectors, same_sent_map):
                                 same_sent_map=same_sent_map,
                                 batch_arcs=[arcs],
                                 aggregate=False) # (1, n_arcs, 1)
-    arc_scores = cuda.to_cpu(arc_scores.data)[0] # (n_arcs, 1)
+    arc_scores = arc_scores.cpu().numpy()[0] # (n_arcs, 1)
     for arc_i, (h, d) in enumerate(arcs):
         result[h,d] = float(arc_scores[arc_i])
     return result
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
