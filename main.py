@@ -348,7 +348,6 @@ def train(model,
                 gold_heads = -np.ones((len(edus),), dtype=np.int32)
                 for h,d,l in gold_arcs:
                     gold_heads[d] = h
-                # TODO here need torch.eval() or not?
                 with torch.no_grad():
                     # Positive
                     pos_arcs = [(h,d) for h,d,l in gold_arcs] # list of (int, int)
@@ -414,6 +413,7 @@ def train(model,
             acc_relation = acc_relation / actual_total_arcs
             loss = loss_attachment + loss_relation
             loss.backward()
+            torch.nn.utils.clip_grad_value_(model.parameters(), gradient_clipping)
             opt.step()
             opt.zero_grad()
             it += 1
