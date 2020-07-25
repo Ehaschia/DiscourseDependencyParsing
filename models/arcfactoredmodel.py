@@ -382,7 +382,7 @@ class ArcFactoredModel(nn.Module):
         #                                 self.word_dim,
         #                                 ignore_label=-1,
         #                                 initialW=initialW)
-        # TODO fix the ignore_label part
+
         self.embed_word = nn.Embedding(len(self.vocab_word),
                                        self.word_dim)
         self.embed_word.weight.data = torch.tensor(initialW)
@@ -458,22 +458,6 @@ class ArcFactoredModel(nn.Module):
         assert len(edus_head[0]) == 3 # NOTE
         assert edus_head[0] == ("<root>", "<root>", "<root>") # NOTE
 
-        #################
-        # TODO?
-        # Bag-of-word embeddings
-        # word_ids = [[self.vocab_word.get(w, self.unk_word_id) for w in edu]
-        #             for edu in edus] # n_edus * length * int
-        # word_ids, mask = utils.padding(word_ids, head=True, with_mask=True) # (n_edus, max_length), (n_edus, max_length)
-        # n_edus, max_length = word_ids.shape
-        # word_ids = utils.convert_ndarray_to_variable(word_ids, seq=False) # (n_edus, max_length)
-        # mask = utils.convert_ndarray_to_variable(mask, seq=False) # (n_edus, max_length)
-        # word_ids = F.reshape(word_ids, (n_edus * max_length,)) # (n_edus * max_length,)
-        # word_vectors = F.dropout(self.embed(word_ids), ratio=0.2) # (n_edus * max_length, word_dim)
-        # word_vectors = F.reshape(word_vectors, (n_edus, max_length, self.word_dim)) # (n_edus, max_length, word_dim)
-        # mask = F.broadcast_to(mask[:,:,None], (n_edus, max_length, self.word_dim)) # (n_edus, max_length, word_dim)
-        # word_vectors = word_vectors * mask # (n_edus, max_length, word_dim)
-        # bow_vectors = F.sum(word_vectors, axis=1) # (n_edus, word_dim)
-        #################
 
         # Beginning-word embedding
         begin_word_ids = [self.vocab_word.get(edu[0], self.unk_word_id) for edu in edus] # n_edus * int
