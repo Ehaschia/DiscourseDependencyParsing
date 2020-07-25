@@ -15,7 +15,7 @@ import pandas as pd
 import gensim
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.model_selection import KFold
-from chainer import cuda, Variable
+# from chainer import cuda, Variable
 import pyprind
 
 ###############################
@@ -1333,14 +1333,14 @@ def calc_word_stats(path_dir, top_k, process=lambda line: line.split()):
 ############################
 # Neural network (using Chainer)
 
-def transform_words(xs):
-    """
-    :type xs: list of list(len=L) of int
-    :rtype: list of Variable(shape=(L,), dtype=np.int32)
-    """
-    xs = [np.asarray(x, dtype=np.int32) for x in xs]
-    xs = [Variable(cuda.cupy.asarray(x)) for x in xs]
-    return xs
+# def transform_words(xs):
+#     """
+#     :type xs: list of list(len=L) of int
+#     :rtype: list of Variable(shape=(L,), dtype=np.int32)
+#     """
+#     xs = [np.asarray(x, dtype=np.int32) for x in xs]
+#     xs = [Variable(cuda.cupy.asarray(x)) for x in xs]
+#     return xs
 
 def padding(xs, head, with_mask):
     """
@@ -1368,17 +1368,17 @@ def padding(xs, head, with_mask):
     else:
         return ys
 
-def convert_ndarray_to_variable(xs, seq):
-    """
-    :type xs: numpy.ndarray(shape=(N, L))
-    :type seq: bool
-    :rtype: list(len=L) of Variable(shape=(N,)), or Variable(shape=(N, L))
-    """
-    if seq:
-        return [Variable(cuda.cupy.asarray(xs[:,j]))
-                for j in range(xs.shape[1])]
-    else:
-        return Variable(cuda.cupy.asarray(xs))
+# def convert_ndarray_to_variable(xs, seq):
+#     """
+#     :type xs: numpy.ndarray(shape=(N, L))
+#     :type seq: bool
+#     :rtype: list(len=L) of Variable(shape=(N,)), or Variable(shape=(N, L))
+#     """
+#     if seq:
+#         return [Variable(cuda.cupy.asarray(xs[:,j]))
+#                 for j in range(xs.shape[1])]
+#     else:
+#         return Variable(cuda.cupy.asarray(xs))
 
 # def get_optimizer(name):
 #     """

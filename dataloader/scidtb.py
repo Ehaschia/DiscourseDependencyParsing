@@ -78,6 +78,7 @@ def read_scidtb(split, sub_dir, relation_level):
             arcs = [(h,d,relation_mapper.f2c(l)) for h,d,l in arcs]
         kargs["arcs"] = arcs
 
+        kargs["name"] = filename
         data = utils.DataInstance(**kargs)
         dataset.append(data)
 
