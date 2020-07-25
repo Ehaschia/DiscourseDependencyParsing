@@ -70,6 +70,13 @@ class IncrementalEisnerDecoder(object):
 
         return arcs
 
+    # tmp
+    def partition(self,
+                  arc_scores,
+                  edu_ids,
+                  sbnds):
+        return self.decoder.sum_without_root(arc_scores=arc_scores, edu_ids=edu_ids[1:], target_bnds=sbnds)
+
     def apply_decoder(self,
                     arc_scores,
                     edu_ids,
@@ -219,6 +226,87 @@ class EisnerDecoder(object):
         arcs = [(edu_ids[h], edu_ids[d]) for h,d in arcs]
         return arcs
 
+    # calculate the score of all candidate tree
+    def summ(self,
+            arc_scores,
+            edu_ids,
+            gold_heads=None):
+        """
+        :type arc_scores: numpy.ndarray(shape=(n_edus, n_edus), dtype="float")
+        :type edu_ids: list of int
+        :type gold_heads: numpy.ndarray(shape=(n_edus, n_edus), dtype=np.int32)
+        :rtype: list of (int, int)
+        """
+        assert edu_ids[0] == 0 # NOTE: Including the Root
+
+        # Initialize charts
+        chart = {} # {(int, int, int, int): float}
+
+        length = len(edu_ids)
+
+        # Base case
+        for i in range(length):
+            chart[i, i, LEFT, COMPLETE] = 0.0
+            chart[i, i, RIGHT, COMPLETE] = 0.0
+            chart[i, i, LEFT, INCOMPLETE] = 0.0
+            chart[i, i, RIGHT, INCOMPLETE] = 0.0
+        for i in range(length):
+            chart[0, i, LEFT, INCOMPLETE] = -np.inf
+
+        # General case (without ROOT)
+        for d in range(1, length):
+            for i1 in range(1, length - d): # NOTE
+                i3 = i1 + d
+
+                # Incomplete span
+                # Left tree
+                sum_score = 0.0
+                arc_score = arc_scores[edu_ids[i3], edu_ids[i1]]
+                for i2 in range(i1, i3):
+                    score = arc_score \
+                            + chart[i1, i2, RIGHT, COMPLETE] \
+                            + chart[i2+1, i3, LEFT, COMPLETE]
+                    sum_score += score
+                chart[i1, i3, LEFT, INCOMPLETE] = sum_score
+                # Right tree
+                sum_score = 0.0
+                arc_score = arc_scores[edu_ids[i1], edu_ids[i3]]
+                for i2 in range(i1, i3):
+                    score = arc_score \
+                            + chart[i1, i2, RIGHT, COMPLETE] \
+                            + chart[i2+1, i3, LEFT, COMPLETE]
+                    sum_score += score
+                chart[i1, i3, RIGHT, INCOMPLETE] = sum_score
+
+                # Complete span
+                # Left tree
+                sum_score = 0.0
+                for i2 in range(i1, i3):
+                    score = chart[i1, i2, LEFT, COMPLETE] \
+                            + chart[i2, i3, LEFT, INCOMPLETE]
+                    sum_score += score
+                chart[i1, i3, LEFT, COMPLETE] = sum_score
+                # Right tree
+                sum_score = 0.0
+                for i2 in range(i1, i3):
+                    score = chart[i1, i2+1, RIGHT, INCOMPLETE] \
+                            + chart[i2+1, i3, RIGHT, COMPLETE]
+                    sum_score += score
+                chart[i1, i3, RIGHT, COMPLETE] = sum_score
+
+        # ROOT attachment
+        # arcs = self.recover_tree(back_ptr, 0, length-1, RIGHT, COMPLETE, arcs=None) # NOTE
+        sum_score = 0.0
+        for i2 in range(1, length):
+            arc_score = arc_scores[edu_ids[0], edu_ids[i2]]
+            score = arc_score \
+                    + chart[0, 0, RIGHT, COMPLETE] \
+                    + chart[1, i2, LEFT, COMPLETE] \
+                    + chart[i2, length-1, RIGHT, COMPLETE]
+            sum_score += score
+        chart[0, length-1, RIGHT, COMPLETE] = sum_score
+        return sum_score
+
     def decode_without_root(self,
                             arc_scores,
                             edu_ids,
@@ -329,6 +417,190 @@ class EisnerDecoder(object):
         arcs = [(edu_ids[h], edu_ids[d]) for h,d in arcs]
         head = edu_ids[head]
         return arcs, head
+
+    def sum_without_root(self,
+                         arc_scores,
+                         edu_ids,
+                         target_bnds):
+        """
+        :type arc_scores: numpy.ndarray(shape=(n_edus, n_edus), dtype="float")
+        :type edu_ids: list of int
+        :type target_bnds: list of (int, int)
+        :rtype: tuple (List[float], List[head])
+        """
+        # Initialize charts
+        chart = {}  # {(int, int, int, int): float}
+        back_ptr = {} # {(int, int, int, int): float}
+
+        length = len(edu_ids)
+        target_bnds = [(edu_ids[left], edu_ids[right]) for left, right in target_bnds]
+        # Base case
+        for i in range(1, length+1):
+            chart[i, i, LEFT, COMPLETE] = 0.0
+            chart[i, i, RIGHT, COMPLETE] = 0.0
+            chart[i, i, LEFT, INCOMPLETE] = 0.0
+            chart[i, i, RIGHT, INCOMPLETE] = 0.0
+        # same block
+        for left, right in target_bnds:
+            right += 1
+            span = right - left
+            for d in range(1, span):
+                for i1 in range(left, right - d):  # NOTE: index "0" does NOT represent ROOT
+                    i3 = i1 + d
+
+                    # Incomplete span
+                    # Left tree
+                    sum_score = 0.0
+                    memo = None
+                    arc_score = arc_scores[i3, i1]
+
+                    for i2 in range(i1, i3):
+                        score = arc_score \
+                                + chart[i1, i2, RIGHT, COMPLETE] \
+                                + chart[i2 + 1, i3, LEFT, COMPLETE]
+                        sum_score += score
+                    chart[i1, i3, LEFT, INCOMPLETE] = sum_score
+                    back_ptr[i1, i3, LEFT, INCOMPLETE] = memo
+                    # Right tree
+                    sum_score = 0.0
+                    memo = None
+                    arc_score = arc_scores[i1, i3]
+
+                    for i2 in range(i1, i3):
+                        score = arc_score \
+                                + chart[i1, i2, RIGHT, COMPLETE] \
+                                + chart[i2 + 1, i3, LEFT, COMPLETE]
+                        sum_score += score
+                    chart[i1, i3, RIGHT, INCOMPLETE] = sum_score
+                    back_ptr[i1, i3, RIGHT, INCOMPLETE] = memo
+
+                    # Complete span
+                    # Left tree
+                    sum_score = 0.0
+                    memo = None
+                    for i2 in range(i1, i3):
+                        score = chart[i1, i2, LEFT, COMPLETE] \
+                                + chart[i2, i3, LEFT, INCOMPLETE]
+                        sum_score += score
+                    chart[i1, i3, LEFT, COMPLETE] = sum_score
+                    back_ptr[i1, i3, LEFT, COMPLETE] = memo
+                    # Right tree
+                    sum_score = 0.0
+                    memo = None
+                    for i2 in range(i1, i3):
+                        score = chart[i1, i2 + 1, RIGHT, INCOMPLETE] \
+                                + chart[i2 + 1, i3, RIGHT, COMPLETE]
+                        sum_score += score
+                    chart[i1, i3, RIGHT, COMPLETE] = sum_score
+                    back_ptr[i1, i3, RIGHT, COMPLETE] = memo
+
+        high_chart = {} # {(int, int, int), float}
+        for i in range(length):
+            high_chart[i, i, i] = 0.0
+        for left, right in target_bnds:
+            for k in range(left, right+1):
+                high_chart[left, k, right] = chart[left, k, LEFT, COMPLETE] \
+                                             + chart[k, right, RIGHT, COMPLETE]
+
+        left_idxs = [left for left, right in target_bnds]
+        right_idxs = [right for left, right in target_bnds]
+        for span_length in range(1, len(target_bnds)):
+            for left_idx in range(0, len(target_bnds)-span_length):
+                for left_span in range(0, span_length):
+                    left_left = left_idxs[left_idx]
+                    left_right = right_idxs[left_idx+left_span]
+                    right_right = right_idxs[left_idx+span_length]
+                    for k_left in range(left_left, left_right+1):
+                        for k_right in range(left_right+1, right_right+1):
+                            if (left_left, k_left, right_right) not in high_chart:
+                                high_chart[left_left, k_left, right_right] = 0.0
+                            if (left_left, k_right, right_right) not in high_chart:
+                                high_chart[left_left, k_right, right_right] = 0.0
+                            high_chart[left_left, k_left, right_right] += (high_chart[left_left, k_left, left_right]
+                                                                           + high_chart[left_right+1, k_right, right_right]
+                                                                           + arc_scores[k_right, k_left])
+                            high_chart[left_left, k_right, right_right] += (high_chart[left_left, k_left, left_right]
+                                                                           + high_chart[left_right+1, k_right, right_right]
+                                                                           + arc_scores[k_left, k_right])
+
+        sum_score = 0.0
+        for k in range(edu_ids[0], edu_ids[-1]+1):
+            sum_score += high_chart[edu_ids[0], k, edu_ids[-1]]
+        return sum_score
+
+    def sum_temp(self, arc_scores, edu_ids):
+        """
+        :type arc_scores: numpy.ndarray(shape=(n_edus, n_edus), dtype="float")
+        :type edu_ids: list of int
+        :rtype: float
+        """
+
+        # Initialize charts
+        chart = {}  # {(int, int, int, int): float}
+        back_ptr = {}  # {(int, int, int, int): float}
+
+        length = len(edu_ids)
+
+        # Base case
+        for i in range(length):
+            chart[i, i, LEFT, COMPLETE] = 0.0
+            chart[i, i, RIGHT, COMPLETE] = 0.0
+            chart[i, i, LEFT, INCOMPLETE] = 0.0
+            chart[i, i, RIGHT, INCOMPLETE] = 0.0
+
+        # General case
+        for d in range(1, length):
+            for i1 in range(0, length - d):  # NOTE: index "0" does NOT represent ROOT
+                i3 = i1 + d
+
+                # Incomplete span
+                # Left tree
+                sum_score = 0.0
+                memo = None
+                arc_score = arc_scores[edu_ids[i3], edu_ids[i1]]
+
+                for i2 in range(i1, i3):
+                    score = arc_score \
+                            + chart[i1, i2, RIGHT, COMPLETE] \
+                            + chart[i2 + 1, i3, LEFT, COMPLETE]
+                    sum_score += score
+                chart[i1, i3, LEFT, INCOMPLETE] = sum_score
+                back_ptr[i1, i3, LEFT, INCOMPLETE] = memo
+                # Right tree
+                sum_score = 0.0
+                arc_score = arc_scores[edu_ids[i1], edu_ids[i3]]
+                for i2 in range(i1, i3):
+                    score = arc_score \
+                            + chart[i1, i2, RIGHT, COMPLETE] \
+                            + chart[i2 + 1, i3, LEFT, COMPLETE]
+                    sum_score+= score
+                chart[i1, i3, RIGHT, INCOMPLETE] = sum_score
+
+                # Complete span
+                # Left tree
+                sum_score = 0.0
+                for i2 in range(i1, i3):
+                    score = chart[i1, i2, LEFT, COMPLETE] \
+                            + chart[i2, i3, LEFT, INCOMPLETE]
+                    sum_score += score
+                chart[i1, i3, LEFT, COMPLETE] = sum_score
+                # Right tree
+                sum_score = 0.0
+                for i2 in range(i1, i3):
+                    score = chart[i1, i2 + 1, RIGHT, INCOMPLETE] \
+                            + chart[i2 + 1, i3, RIGHT, COMPLETE]
+                    sum_score += score
+                chart[i1, i3, RIGHT, COMPLETE] = sum_score
+
+        # ROOT identification
+        sum_score = 0.0
+
+        for i2 in range(0, length):
+            score = chart[0, i2, LEFT, COMPLETE] \
+                    + chart[i2, length - 1, RIGHT, COMPLETE]
+            sum_score += score
+
+        return sum_score
 
     def recover_tree(self, back_ptr, i1, i3, direction, complete, arcs=None):
         """
