@@ -53,6 +53,8 @@ def main(args):
 
     if actiontype == "train":
         path_log = os.path.join(config.getpath("results"), basename + ".training.log")
+    elif actiontype == "unsup_train":
+        path_log = os.path.join(config.getpath("results"), basename + ".training.log")
     else:
         path_log = os.path.join(config.getpath("results"), basename + ".evaluation.log")
     path_train = os.path.join(config.getpath("results"), basename + ".training.jsonl")
