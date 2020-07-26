@@ -52,6 +52,25 @@ def load_baseline():
             processed_test.append((data, arcs))
         return processed_train, processed_dev, processed_test
 
+import treesamplers
+def depformat():
+    test_dataset = dataloader.read_scidtb("test", "gold", relation_level="coarse-grained")
+    sampler = treesamplers.TreeSampler("RB_TD_TD".split("_"))
+    processed_test = []
+    for data in test_dataset:
+        edu_ids = data.edu_ids
+        edus = data.edus
+        edus_postag = data.edus_postag
+        edus_head = data.edus_head
+        sbnds = data.sbnds
+        pbnds = data.pbnds
+        gold_arcs = data.arcs
+
+        # CHECK: Single ROOT?
+        # assert sum([1 for h, d, l in gold_arcs if h == 0]) == 1
+        arcs = sampler.sample(edu_ids, edus, edus_head, sbnds, pbnds)
+        processed_test.append((data, arcs))
+    return processed_test
 
 def eval(dataset):
 
@@ -72,7 +91,8 @@ def eval(dataset):
     print(res)
 
 def main():
-    train, dev, test = load_baseline()
+    # train, dev, test = load_baseline()
+    test = depformat()
     eval(test)
 
 if __name__ == '__main__':
