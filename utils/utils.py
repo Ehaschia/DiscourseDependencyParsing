@@ -1,25 +1,30 @@
-from collections import OrderedDict, Counter
+from collections import OrderedDict, Counter, defaultdict
 from configparser import SafeConfigParser
 import datetime
 import hashlib
 import json
 import logging
+from functools import reduce
 from logging import getLogger, Formatter, StreamHandler, DEBUG
 import os
 import re
 import sys
 import time
+from typing import List, Tuple, Union, Sequence, NamedTuple, Dict
 
 import numpy as np
 import pandas as pd
 import gensim
+import torch
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.model_selection import KFold
 # from chainer import cuda, Variable
 import pyprind
+import random
 
 ###############################
 # Logging
+from torch import Tensor
 
 logger = getLogger("logger")
 logger.setLevel(DEBUG)
@@ -1514,4 +1519,161 @@ def extract_values_with_regex(filepath, regex, names):
 #                     fontsize=fontsize,
 #                     savepath=savepath, figsize=figsize, dpi=dpi)
 #
+
+def calculate_uas(pred: List[List[int]], gold: List[List[int]]) -> Tuple[float, float]:
+    correct, correct_root, total = 0, 0, 0
+
+    assert len(pred) == len(gold), "`pred` mismatch `gold`"
+    for pred_one, gold_one in zip(pred, gold):
+        assert len(pred_one) == len(gold_one), "`pred` mismatch `gold`"
+        if len(gold_one) <= 1:
+            continue
+        # TODO fix here
+        for pred_parent, gold_parent in zip(pred_one, gold_one):
+            if pred_parent == gold_parent[0]:
+                correct += 1
+                if gold_parent[0] == 0:
+                    correct_root += 1
+            # if pred_parent > len(gold_one):
+            #     utils.ex.logger.warning('find bad arc')
+            total += 1
+    return correct / total, correct_root / total
+
+def make_sure_dir_exists(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
+    elif not os.path.isdir(path):
+        raise RuntimeError(f"{path} is exists but not a directory")
+
+def push_front(array: Tensor, value: Union[int, float], dim: int) -> Tensor:
+    pre_shape = array.shape[:dim]
+    suf_shape = array.shape[dim + 1:]
+
+    out = torch.full((*pre_shape, 1, *suf_shape), value, device=array.device, dtype=array.dtype)
+    out = torch.cat([out, array], dim=dim)
+    return out
+
+
+def scatter_add(a: Tensor, indices: Sequence[Union[torch.LongTensor, int]], value: Union[float, int, Tensor]):
+    device = a.device
+    shape = a.shape
+    assert len(indices) <= len(shape), 'too many indices'
+
+    for index in indices:
+        if isinstance(index, Tensor):
+            num_ele_in_indices = indices[0].flatten().shape[0]
+            break
+    num_ele_in_broadcast = reduce(int.__mul__, shape[len(indices):]) if len(indices) < len(shape) else 1
+    index = torch.zeros(num_ele_in_indices * num_ele_in_broadcast, dtype=torch.long, device=device)
+    total_index = index.shape[0]
+
+    suf_dim = 1
+    for i in range(len(shape) - 1, len(indices) - 1, -1):
+        suf_dim *= shape[i]
+        index += torch.arange(suf_dim, device=device).expand(total_index // suf_dim, -1).reshape(-1)
+
+    for i in range(len(indices) - 1, -1, -1):
+        _index = torch.ones(num_ele_in_indices, dtype=torch.long, device=device) * indices[i] \
+            if not isinstance(indices[i], Tensor) else indices[i].cuda()
+        _index = _index * suf_dim
+        _index = _index.view(-1, 1).expand(-1, num_ele_in_broadcast)
+        index += _index.reshape(-1)
+        suf_dim *= shape[i]
+
+    if not isinstance(value, Tensor):
+        value = torch.ones(index.shape, device=device, dtype=a.dtype) * value
+    else:
+        if value.nelement() == num_ele_in_indices:
+            value = value.view(-1, 1).expand(-1, num_ele_in_broadcast).reshape(-1)
+        else:
+            value = value.view(-1).expand(index.nelement())
+    a = a.put_(index, value, accumulate=True)
+    return a
+
+
+# noinspection PyUnresolvedReferences
+def set_seed(trial_name):
+    random_seed = trial_name
+    random_seed = hash_string(random_seed)
+    random.seed(random_seed)
+    np.random.seed(random_seed)
+    torch.manual_seed(random_seed)
+    if torch.cuda.is_available():
+        # in most case, cuda.manual_seed is not required because randomness op is done by cpu.
+        torch.cuda.manual_seed(random_seed)
+        torch.cuda.manual_seed_all(random_seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+
+def namedtuple2dict(n: NamedTuple, remove_suffix: str = '_array', remove_none: bool = False) -> Dict:
+    fields = n._fields
+    if remove_suffix:
+        length = len(remove_suffix)
+        fields = list(map(lambda x: x[:-length] if x.endswith(remove_suffix) else x, fields))
+    return {k: v for k, v in zip(fields, n) if not remove_none or v is not None}
+
+
+
+def calculate_detailed_uas(pred: List[List[int]], gold: List[List[int]], tag_array: List[List[int]], path_length=1):
+    assert len(pred) == len(gold), "`pred` mismatch `gold`"
+
+    def get_path(tree, path_length):
+        # depth-first walk on tree to build all path with given `length`
+        assert tree[0] == -1, "need root node"
+
+        # build childs
+        children = [[] for _ in range(len(tree))]
+        for idx, parent_idx in enumerate(tree):
+            if idx == 0:
+                continue
+            children[parent_idx].append(idx)
+        # build all root-to-leave path
+        result = []
+        path_length += 1
+
+        def depth_first_walk(stack):
+            nonlocal result
+            current_node = stack[-1]
+            current_children = children[current_node]
+            if len(stack) > 1:
+                result.append(tuple(map(lambda x:x-1, stack[-path_length:])))
+            for child in current_children:
+                depth_first_walk(stack + [child])
+
+        depth_first_walk([0])
+        return result
+
+    correct, total = 0, 0
+    correct_len, total_len = defaultdict(int), defaultdict(int)
+    correct_rule, total_rule = Counter(), Counter()
+    tag_array = tag_array.cpu().tolist()
+    for i in range(len(pred)):
+        pred[i] = pred[i].tolist()
+        assert all(map(lambda x: x<=len(pred[i]), pred[i])), 'bad arc in predicts'
+        if len(gold[i]) <= 1:
+            continue
+        gold_path = set(get_path([-1] + gold[i], path_length))
+        pred_path = set(get_path([-1] + pred[i], path_length))
+        correct_path = gold_path & pred_path
+
+        correct += len(correct_path)
+        total += len(gold_path)
+        correct_len[len(gold[i])] += len(correct_path)
+        total_len[len(gold[i])] += len(gold_path)
+        correct_rule.update([tuple(tag_array[i][idx] for idx in path) for path in correct_path])
+        total_rule.update([tuple(tag_array[i][idx] for idx in path) for path in gold_path])
+    # basic uas, uas by len, uas by path
+    return correct / total, {k: correct_len[k] / total_len[k] for k in correct_len}, \
+        {p: (correct_rule[p] / total_rule[p], total_rule[p]) for p in total_rule.keys()}
+
+def make_mask(seq_length, max_len=None):
+    # print(torch.max(seq_length))
+    if max_len is None:
+        max_len = seq_length.max()
+    batch_size = seq_length.shape[0]
+    seq_range = torch.arange(0, max_len, device=seq_length.device)
+    seq_range = seq_range.unsqueeze(0).expand(batch_size, max_len)
+    seq_length = seq_length.unsqueeze(1)
+    return seq_range < seq_length
 
