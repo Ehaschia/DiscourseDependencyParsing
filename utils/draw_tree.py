@@ -11,8 +11,8 @@ from spacy import displacy
 
 
 class DependencyTreeDrawer(object):
-    def __init__(self, path: str):
-        self.path = path
+    def __init__(self, port: str):
+        self.port = port
         self.rander = DependencyRenderer()
         self.html = ""
 
@@ -34,14 +34,17 @@ class DependencyTreeDrawer(object):
         idx2edu_str = "<ul>\n" + "\n".join(idx2edu) + "\n</ul>"
         return {"words": idx, "arcs": format_arcs}, idx2edu_str
 
-    def _html(self, parsed: List[Dict]):
-        return self.rander.render(parsed).strip()
+    def _html(self, paired_parsed: List[Tuple[Dict, str]]) -> str:
+        parsed, appendix = map(list, zip(*paired_parsed))
+        html_tree = [self.rander.render_svg(i, p['words'], p['arcs']) for i, p in enumerate(parsed)]
+        html_tree = [t+'\n'+a for t, a in zip(html_tree, appendix)]
+        return ' '.join(html_tree).strip()
 
     # debug
-    def show(self, edus: List[Tuple], arcs: List[Tuple]):
-        parsed, edu_html = self.convert(edus, arcs)
-        self.html = self._html([parsed])
-        self.html += '\n' + edu_html
+    def show(self, dep_trees: List[Tuple[List[Tuple], List[Tuple]]]) -> None:
+
+        paired_html = [self.convert(edus, arcs) for edus, arcs in dep_trees]
+        self.html = self._html(paired_html)
         httpd = simple_server.make_server('0.0.0.0', 5000, self.app)
         # prints("Using the '{}' visualizer".format('dep'),
         #        title="Serving on port {}...".format(5000))
@@ -72,7 +75,9 @@ def main():
     # load scidtb
     train_dataset = dataloader.read_scidtb("train", "", relation_level="coarse-grained")
     drawer = DependencyTreeDrawer("")
-    drawer.show(train_dataset[0].edus, train_dataset[0].arcs)
+    trees = [(inst.edus, inst.arcs) for inst in train_dataset]
+    drawer.show(trees)
+
 
 if __name__ == '__main__':
     main()
