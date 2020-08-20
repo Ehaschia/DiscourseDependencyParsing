@@ -104,7 +104,7 @@ class OnlineEMTrainer(object):
 
         for epoch_id in range(epoch):
             self.current_epoch = epoch_id
-            it = self.train_iter if self.cfg.device == 'cpu' else cuda_array_guard(self.train_iter)
+            it = array_guard(self.train_iter) if self.cfg.device == 'cpu' else cuda_array_guard(self.train_iter)
             model_ll, nn_loss, n_instance, nn_total_epoch, n_batch = 0., 0., 0, 0, 0
 
             for one_batch in it:
@@ -135,7 +135,6 @@ class OnlineEMTrainer(object):
                 counts = {'t': tdr_param[0].grad.detach() if tdr_param[0].grad is not None else None,
                           'd': tdr_param[1].grad.detach() if tdr_param[1].grad is not None else None,
                           'r': tdr_param[2].grad.detach() if tdr_param[2].grad is not None else None}
-
                 # with torch.no_grad():
                 #     needed_param = [(i, m) for i, (p, m) in enumerate(zip(tdr_param, 'tdr')) if p is None]
                 #     dmv_mode = ''.join([p[1] for p in needed_param])
@@ -220,7 +219,7 @@ class OnlineEMTrainer(object):
             it = self.train_iter if self.cfg.device == 'cpu' else cuda_array_guard(self.train_iter)
             nn_loss, n_instance, nn_epoch_total, n_batch = 0., 0, 0, 0
             for one_batch in it:
-                tag_array = self.converter(one_batch.word_array, one_batch.pos_array)
+                tag_array = self.converter(one_batch.word_array, one_batch.head_pos_array)
                 # assert (tag_array < 40).all()
                 self.nn.eval()
                 with torch.no_grad():
@@ -264,7 +263,8 @@ class OnlineEMTrainer(object):
                 utils.ex.log_scalar('init.dev.uas', uas_dev, epoch_id)
                 utils.ex.log_scalar('init.test.uas', uas_test, epoch_id)
 
-    def init_train_v2(self, dataset: ConllDataset, epoch: Optional[int] = None, report: bool = True, subepoch: Optional[int] = None, batch_size: Optional[int] = None):
+    def init_train_v2(self, dataset: ScidtbDataset, epoch: Optional[int] = None, report: bool = True,
+                      subepoch: Optional[int] = None, batch_size: Optional[int] = None):
         """
         unlike init_train, here directly use pretrained counts to train nn.
         in init_train, pretrained counts first init dmv, then run dmv get counts, then train nn.
@@ -272,10 +272,10 @@ class OnlineEMTrainer(object):
         heads, valences, head_valences = self.dmv.batch_recovery(dataset)
         len_array = dataset.get_all_len().to(self.cfg.device)
         _loader = iter(dataset.get_dataloader(False, len(dataset), False, 0, 0))  # TODO: mini batch run E step
-        _loader = cuda_array_guard(_loader) if self.cfg.device != 'cpu' else _loader
+        _loader = cuda_array_guard(_loader) if self.cfg.device != 'cpu' else array_guard(_loader)
         _batch = next(_loader)
         with torch.no_grad():
-            tag_array = self.converter(_batch[2], _batch[1])
+            # tag_array = self.converter(_batch[2], _batch[1])
             r, t, d = self.dmv.calcu_viterbi_count(heads, head_valences, valences, len_array)
             d = torch.sum(d, dim=2)
             t = self.nn.transition_param_helper_2(t)
@@ -295,7 +295,7 @@ class OnlineEMTrainer(object):
             it = loader if self.cfg.device == 'cpu' else cuda_array_guard(loader)
             nn_loss, n_instance = 0., 0
             for one_batch in it:
-                tag_array = self.converter(one_batch.word_array, one_batch.pos_array)
+                tag_array = self.converter(one_batch.word_array, one_batch.head_pos_array)
                 arrays = namedtuple2dict(one_batch)
                 counts = {'r': r[one_batch.id_array], 't': t[one_batch.id_array], 'd': d[one_batch.id_array]}
                 loss, nn_epoch = self.non_end2end_neural_train(tag_array, arrays, counts, epoch=subepoch, batch_size=batch_size)  # noqa
@@ -305,9 +305,10 @@ class OnlineEMTrainer(object):
                 self.nn.eval()
                 uas_dev, ll_dev = self.evaluate(self.dev_ds)
                 uas_test, ll_test = self.evaluate(self.test_ds)
-                utils.ex.logger.info(f'init epoch {epoch_id}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
-                utils.ex.log_scalar('init.dev.uas', uas_dev, epoch_id)
-                utils.ex.log_scalar('init.test.uas', uas_test, epoch_id)
+                # utils.ex.logger.info(f'init epoch {epoch_id}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
+                print(f'init epoch {epoch_id}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
+                # utils.ex.log_scalar('init.dev.uas', uas_dev, epoch_id)
+                # utils.ex.log_scalar('init.test.uas', uas_test, epoch_id)
 
     def non_end2end_neural_train(self,
                                  tag_array: Tensor,

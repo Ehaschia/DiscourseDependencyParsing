@@ -92,6 +92,7 @@ class DiscriminativeNeuralDMV(nn.Module):
         self.emb_dim = self.cfg.dim_pos_emb + self.cfg.dim_valence_emb + self.cfg.lstm_dim_out
 
         self.edus, self.edus_len = None, None
+        self.sent_map = None
 
         self.left_right_linear = nn.Linear(self.emb_dim, 2 * self.cfg.dim_hidden)
 
@@ -167,8 +168,11 @@ class DiscriminativeNeuralDMV(nn.Module):
         head_pos_emb = self.pos_emb(arrays["head_pos"])
         # head_deprel_emb = self.deprel_emb(arrays["head_deprel"])
 
-        self.edus = arrays["edus"]
         self.edus_len = arrays["edus_len"]
+        # print(torch.sum(~torch.eq(arrays["edus"][:, :, torch.max(self.edus_len):], 7618)))
+        # print(torch.sum(~torch.eq(arrays["edus"][:, :, torch.max(self.edus_len):], 7618)))
+        self.edus = arrays["edus"][:, :, :torch.max(self.edus_len)]
+        self.sent_map = arrays["sent_map"]
         # word_emb = self.word_emb(arrays['word'])
 
         edu_vectors = torch.cat([first_word_emb,
@@ -196,7 +200,6 @@ class DiscriminativeNeuralDMV(nn.Module):
             r_embs, d, v = self.prepare_root(embs, None, batch_size, max_len, 'edv')
             params['r'] = self.real_forward(r_embs, d, v, 'root').view(batch_size, max_len)
             del r_embs, d, v
-
         return [params.get(m) for m in mode]
 
     def loss(self, predict_params: List[Tensor], counts: List[Tensor], mask, mode: str = 'tdr') -> Tensor:
@@ -204,18 +207,18 @@ class DiscriminativeNeuralDMV(nn.Module):
 
         predict_params = {k: v for k, v in zip(mode, predict_params)}
         counts = {k: v for k, v in zip(mode, counts)}
-
+        real_size = predict_params['d'].size()[1]
         if 'd' in mode and 'd' in self.mode:
             d_mask = self.prepare_decision(None, mask, None, None, mode='m')
-            loss += self._loss(predict_params['d'], counts['d'], d_mask)
+            loss += self._loss(predict_params['d'], counts['d'][:, :real_size], d_mask)
 
         if 't' in mode and 't' in self.mode:
             t_mask = self.prepare_transition(None, mask, None, None, mode='m')
-            loss += self._loss(predict_params['t'], counts['t'], t_mask)
+            loss += self._loss(predict_params['t'], counts['t'][:, :real_size, :real_size], t_mask)
 
         if 'r' in mode and 'r' in self.mode:
             r_mask = self.prepare_root(None, mask, None, None, mode='m')
-            loss += self._loss(predict_params['r'], counts['r'], r_mask)
+            loss += self._loss(predict_params['r'], counts['r'][:, :real_size], r_mask)
 
         return loss / torch.sum(mask)
 
@@ -261,7 +264,8 @@ class DiscriminativeNeuralDMV(nn.Module):
             #
             # here we use bag of word
             batch_size, max_len, word_len = self.edus.size()
-            words = self.word_emb(self.edus.view(-1)).view(batch_size, max_len, word_len, self.cfg.dim_word_emb)
+
+            words = self.word_emb(self.edus.reshape(-1)).reshape(batch_size, max_len, word_len, self.cfg.dim_word_emb)
             edus_mask = make_mask(self.edus_len.view(-1)).view(batch_size, max_len, word_len, -1)
             bag_word = torch.sum(words * edus_mask, dim=2) / (self.edus_len + (self.edus_len == 0).long() ).unsqueeze(-1)
             # avoid nan error
@@ -273,7 +277,7 @@ class DiscriminativeNeuralDMV(nn.Module):
                           bag_word.permute(0, 2, 3, 4, 1).reshape(-1, self.cfg.dim_pre_out_child, max_len,)).\
                 reshape(batch_size, 2, self.cfg.cv, max_len, max_len)
             length_mask = (self.edus_len == 0).long() * (torch.min(h)-1e5)
-
+            h = h + (2*torch.max(h)*self.sent_map).view(batch_size, 1, 1, max_len, max_len)
             prob_h = torch.log_softmax((h + length_mask.view(batch_size, 1, 1, max_len, 1) +
                                         length_mask.view(batch_size, 1, 1, 1, max_len)), dim=-1)
             return prob_h.permute(0, 3, 4, 1, 2)

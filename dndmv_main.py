@@ -140,6 +140,7 @@ def dndmv_main(args):
     # TODO change the init_train to using right branch tree
     # How To do that?
     # trainer.init_train(cfg.getint("epoch_init"))
+    trainer.init_train_v2(train_dataset, cfg.getint("epoch_init"), False)
     trainer.train(cfg.getint("epoch"), stop_hook=trainer.default_stop_hook)
 
     # evaluate

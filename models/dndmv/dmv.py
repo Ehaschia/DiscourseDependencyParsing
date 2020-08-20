@@ -7,9 +7,10 @@ from easydict import EasyDict
 import torch
 from torch import Tensor, nn
 
+import treesamplers
 import utils
 from utils.common import *
-from utils.data import ConllDataset, prefetcher
+from utils.data import ConllDataset, prefetcher, ScidtbDataset
 from utils.utils import push_front, scatter_add
 
 try:
@@ -559,15 +560,21 @@ class DMV(nn.Module):
                 head_valences[idx] = NOCHILD  # NO USAGE, just avoid out of bound
         return valences, head_valences
 
-    def batch_recovery(self, dataset: ConllDataset, predicted='misc') -> Tuple[Tensor, Tensor, Tensor]:
-        utils.ex.logger.info(f"using {predicted} as predicted parse tree")
+    def batch_recovery(self, dataset: ScidtbDataset, predicted='RB_RB_RB') -> Tuple[Tensor, Tensor, Tensor]:
+        # utils.ex.logger.info(f"using {predicted} as predicted parse tree")
+        print(f"using {predicted} as predicted parse tree")
+
+        sampler = treesamplers.TreeSampler(predicted.split("_"))
 
         heads = npizeros((len(dataset), self.cfg.max_len + 1))
         valences = npizeros((len(dataset), self.cfg.max_len + 1, 2))
         head_valences = npizeros((len(dataset), self.cfg.max_len + 1))
 
         for idx, instance in enumerate(dataset):
-            one_heads = npasarray(list(map(int, getattr(instance, predicted))))
+            # one_heads = npasarray(list(map(int, getattr(instance, predicted))))
+            one_heads = sampler.sample(inputs=instance.edu_ids, edus=instance.edus,
+                                       edus_head=instance.edus_head, sbnds=instance.sbnds, pbnds=instance.pbnds)
+            one_heads = np.asarray([rule[0] for rule in sorted(one_heads, key=lambda x: x[1])])
             one_valences, one_head_valences = self.recovery_one(one_heads)
             heads[idx, 1:len(instance) + 1] = one_heads
             valences[idx, 1:len(instance) + 1] = one_valences
