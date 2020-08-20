@@ -13,6 +13,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, Sampler
 from torch.nn.utils.rnn import pad_sequence
 
+from models.functions import make_same_sent_map
 
 class Vocab:
     def __init__(self, stoi: Dict[str, int], itos: List[str], freeze: bool, unk: str, pad: str):
@@ -600,7 +601,8 @@ def minimal_file_reader(path: str,
 ScidtbDatasetBatchData = namedtuple("ScidtbDatasetBatchData", ('id_array', 'pos_array', 'word_array', 'len_array',
                                                                'first_word_array', 'end_word_array', 'head_word_array',
                                                                'first_pos_array', 'end_pos_array', 'head_pos_array',
-                                                               'head_deprel_array', 'edus_array', 'edus_len_array'))
+                                                               'head_deprel_array', 'edus_array', 'edus_len_array',
+                                                               'sent_map_array'))
 
 # convert dataInstance to tensor friendly in this class
 class ScidtbInstance:
@@ -622,6 +624,7 @@ class ScidtbInstance:
 
         self._edus_list = None
         self._edus_len_np = None
+        self._sent_map_np = None
 
     def __len__(self):
         return len(self.entry.arcs)
@@ -770,6 +773,11 @@ class ScidtbInstance:
             self._edus_len_np = npasarray(list(map(len, self.edus)))
         return self._edus_len_np
 
+    @property
+    def sent_map_np(self) -> Optional[np.ndarray]:
+        if self._sent_map_np is None:
+            self._sent_map_np = make_same_sent_map(self.edus, self.sbnds)
+        return self._sent_map_np
 
 
     # def get_raw(self) -> str:
@@ -837,6 +845,9 @@ class ScidtbDataset(Dataset):
 
     def __iter__(self):
         return iter(self.instances)
+
+    def get_all_len(self):
+        return torch.tensor([len(i) for i in self.instances])
 
     @staticmethod
     def collect_fn(batch_raw_data: List[ScidtbInstance]):
@@ -919,19 +930,30 @@ class ScidtbDataset(Dataset):
                 for idx, edu in enumerate(edus_ins):
                     edus_ins[idx] = edu + [pad] * (max_len - len(edu))
 
-            edus_array = pad_sequence(list(map(torch.tensor, edus_list)), batch_first=True, padding_value=pad)
+            edus_array = pad_sequence(list(map(torch.tensor, edus_list)), batch_first=True, padding_value=pad).long()
 
         edus_len_np = [ins.edus_len_np for ins in batch_raw_data]
         if edus_len_np[0] is None:
             edus_len_array = None
         else:
             pad = 0
-            edus_len_array = pad_sequence(list(map(torch.tensor, edus_len_np)), batch_first=True, padding_value=pad)
+            edus_len_array = pad_sequence(list(map(torch.tensor, edus_len_np)), batch_first=True, padding_value=pad).long()
 
+        sent_map_np = [ins.sent_map_np for ins in batch_raw_data]
+        if sent_map_np[0] is None:
+            sent_map_array = None
+        else:
+            pad = 0
+            sent_len = max(list(map(max, [list(map(len, sent_map_ins)) for sent_map_ins in sent_map_np])))
+            for idx, sent_map_ins in enumerate(sent_map_np):
+                x, y = sent_map_ins.shape
+                zeros = np.zeros((x, sent_len-y))
+                sent_map_np[idx] = np.concatenate((sent_map_ins, zeros), axis=1)
+            sent_map_array = pad_sequence(list(map(torch.tensor, sent_map_np)), batch_first=True, padding_value=pad).long()
         return ScidtbDatasetBatchData(id_array=id_array, pos_array=None, word_array=None, len_array=len_array,
                                       first_word_array=first_word_array, end_word_array=end_word_array,
                                       head_word_array=head_word_array, first_pos_array=first_pos_array,
                                       end_pos_array=end_pos_array, head_pos_array=head_pos_array,
                                       head_deprel_array=head_deprel_array, edus_len_array=edus_len_array,
-                                      edus_array=edus_array)
+                                      edus_array=edus_array, sent_map_array=sent_map_array)
 
