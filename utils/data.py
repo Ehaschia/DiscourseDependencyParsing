@@ -6,6 +6,7 @@ from collections import Counter, namedtuple, OrderedDict
 from itertools import groupby
 
 import utils
+from models.context_sensitive_encoder import CSEncoder
 from utils.common import *
 from utils.utils import make_sure_dir_exists, DataInstance
 from typing import Iterable, Dict, List, Optional, Union, Iterator, Callable, Tuple, Generator, Type, Any
@@ -14,6 +15,8 @@ from torch.utils.data import Dataset, DataLoader, Sampler
 from torch.nn.utils.rnn import pad_sequence
 
 from models.functions import make_same_sent_map
+
+from sklearn.cluster import KMeans
 
 class Vocab:
     def __init__(self, stoi: Dict[str, int], itos: List[str], freeze: bool, unk: str, pad: str):
@@ -626,6 +629,9 @@ class ScidtbInstance:
         self._edus_len_np = None
         self._sent_map_np = None
 
+        # kmeans parameter
+        self.kcluster_label = None
+
     def __len__(self):
         return len(self.entry.arcs)
 
@@ -652,7 +658,6 @@ class ScidtbInstance:
             self._pos_np = []
             for edu_postag in self.edus_postag:
                 self._pos_np.append(npasarray(list(map(self.ds.pos_vocab.__getitem__, edu_postag))))
-
         return self._pos_np
 
     @property
@@ -773,47 +778,19 @@ class ScidtbInstance:
             self._edus_len_np = npasarray(list(map(len, self.edus)))
         return self._edus_len_np
 
+    # differren version of sbnds
+    # @property
+    # def sent_map_np(self) -> Optional[np.ndarray]:
+    #     if self._sent_map_np is None:
+    #         self._sent_map_np = make_same_sent_map(self.edus + ['root'], self.sbnds)
+    #         self._sent_map_np = self._sent_map_np[1:, 1:]
+    #     return self._sent_map_np
+
     @property
-    def sent_map_np(self) -> Optional[np.ndarray]:
+    def sent_map_np(self) -> Optional[List[Tuple[int, int]]]:
         if self._sent_map_np is None:
-            self._sent_map_np = make_same_sent_map(self.edus, self.sbnds)
+            self._sent_map_np = np.array(self.sbnds)
         return self._sent_map_np
-
-
-    # def get_raw(self) -> str:
-    #     raw_entries = []
-    #     if self.ds is not None and self.ds.compact_mode:
-    #         for e in self.entry:
-    #             raw_entries.append(f'{e.id}\t{e.form}\t{e.pos}\t{e.parent_id}')
-    #     else:
-    #         for e in self.entries:
-    #             raw_entries.append(str(e))
-    #     return '\n'.join(raw_entries)
-
-    # def remove_entry(self, id: int, reset_parent: bool = False):
-    #     """
-    #
-    #     :param id: entry.id, start from 1
-    #     :param reset_parent: set parent id to -1 when find bad arc
-    #     :return:
-    #     """
-    #     assert (0 < id <= len(self)), "out of bound"
-    #
-    #     for e in self.entries:
-    #         if e.id == id:
-    #             continue
-    #         if e.parent_id == id:
-    #             if reset_parent:
-    #                 e.parent_id = -1
-    #             else:
-    #                 raise ValueError(f"remove {id} will make bad arc")
-    #         if e.parent_id > id:
-    #             e.parent_id -= 1
-    #         if e.id > id:
-    #             e.id -= 1
-    #     self.entries.pop(id - 1)
-
-
 
 class ScidtbDataset(Dataset):
     def __init__(self, instanceList: List[DataInstance], vocab_word: OrderedDict= None, vocab_postag: OrderedDict= None,
@@ -851,24 +828,9 @@ class ScidtbDataset(Dataset):
 
     @staticmethod
     def collect_fn(batch_raw_data: List[ScidtbInstance]):
-        # TODO in this config, we only consider the feature from edu same with jap paper.
 
         id_array = torch.tensor([d.id for d in batch_raw_data])
         len_array = torch.tensor([len(d) for d in batch_raw_data])
-
-        # pos_np = [d.pos_np for d in batch_raw_data]
-        # if pos_np[0] is None:
-        #     pos_array = None
-        # else:
-        #     pos_array = pad_sequence(list(map(torch.tensor, pos_np)), True, 0)
-
-
-        # norm_np = [d.norm_np for d in batch_raw_data]
-        # if norm_np[0] is None:
-        #     word_array = None
-        # else:
-        #     pad = batch_raw_data[0].ds.word_vocab.pad
-        #     word_array = pad_sequence(list(map(torch.tensor, norm_np)), True, pad)
 
         first_word_np = [ins.first_word_np for ins in batch_raw_data]
         if first_word_np[0] is None:
@@ -940,15 +902,23 @@ class ScidtbDataset(Dataset):
             edus_len_array = pad_sequence(list(map(torch.tensor, edus_len_np)), batch_first=True, padding_value=pad).long()
 
         sent_map_np = [ins.sent_map_np for ins in batch_raw_data]
+
+        # if sent_map_np[0] is None:
+        #     sent_map_array = None
+        # else:
+        #     pad = 0
+        #     sent_len = max(list(map(max, [list(map(len, sent_map_ins)) for sent_map_ins in sent_map_np])))
+        #     for idx, sent_map_ins in enumerate(sent_map_np):
+        #         x, y = sent_map_ins.shape
+        #         zeros = np.zeros((x, sent_len-y))
+        #         sent_map_np[idx] = np.concatenate((sent_map_ins, zeros), axis=1)
+        #     sent_map_array = pad_sequence(list(map(torch.tensor, sent_map_np)), batch_first=True, padding_value=pad).long()
+
         if sent_map_np[0] is None:
             sent_map_array = None
         else:
-            pad = 0
-            sent_len = max(list(map(max, [list(map(len, sent_map_ins)) for sent_map_ins in sent_map_np])))
-            for idx, sent_map_ins in enumerate(sent_map_np):
-                x, y = sent_map_ins.shape
-                zeros = np.zeros((x, sent_len-y))
-                sent_map_np[idx] = np.concatenate((sent_map_ins, zeros), axis=1)
+            pad = -100
+            # maxlen = max([sent_map_ins.shape[0] for sent_map_ins in sent_map_np])
             sent_map_array = pad_sequence(list(map(torch.tensor, sent_map_np)), batch_first=True, padding_value=pad).long()
         return ScidtbDatasetBatchData(id_array=id_array, pos_array=None, word_array=None, len_array=len_array,
                                       first_word_array=first_word_array, end_word_array=end_word_array,
@@ -956,4 +926,191 @@ class ScidtbDataset(Dataset):
                                       end_pos_array=end_pos_array, head_pos_array=head_pos_array,
                                       head_deprel_array=head_deprel_array, edus_len_array=edus_len_array,
                                       edus_array=edus_array, sent_map_array=sent_map_array)
+
+ScidtbDatasetWithEmbBatchData = namedtuple("ScidtbDatasetWithEmbBatchData", ('id_array', 'pos_array', 'word_array', 'len_array',
+                                                               'first_word_array', 'end_word_array', 'head_word_array',
+                                                               'first_pos_array', 'end_pos_array', 'head_pos_array',
+                                                               'head_deprel_array', 'edus_array', 'edus_len_array',
+                                                               'sent_map_array', 'context_embed_array', 'kcluster_label_array'))
+
+
+class ScidtbInstanceWithEmb(ScidtbInstance):
+    def __init__(self, id: int, entry: DataInstance, dataset: 'ScidtbDatasetWithEmb' = None):
+        super().__init__(id, entry, dataset)
+        self.context_embed_np = None
+
+    def __getattr__(self, item):
+        return getattr(self.entry, item)
+
+    # here property implement is bad.
+    # https://python3-cookbook.readthedocs.io/zh_CN/latest/c08/p08_extending_property_in_subclass.html
+    # @property
+    # endpoint method concat begin and end [e_i, e_j]
+    def build_context_embed_np(self) -> Optional[np.ndarray]:
+        if self.ds.cs_encoder is None:
+            return None
+        if self.context_embed_np is None:
+            edus_representation = self.ds.cs_encoder.sent_sensitive_encode(self.entry)
+            final = []
+            for edu_representation in edus_representation:
+                edu_representation = torch.cat([edu_representation[0], edu_representation[-1]], dim=-1)
+                final.append(edu_representation)
+            final = torch.stack(final, dim=0).detach().cpu().numpy()
+            self.context_embed_np = final
+        return self.context_embed_np
+
+
+class ScidtbDatasetWithEmb(ScidtbDataset):
+    def __init__(self, instanceList: List[DataInstance], vocab_word: OrderedDict= None, vocab_postag: OrderedDict=None,
+             vocab_deprel: OrderedDict=None, vocab_relation: OrderedDict=None, encoder: str='bert'):
+        super().__init__(instanceList, vocab_word, vocab_postag, vocab_deprel, vocab_relation)
+        self.instances = []
+        for idx, instance in enumerate(instanceList):
+            self.instances.append(ScidtbInstanceWithEmb(idx, instance, self))
+        if encoder == 'bert':
+            self.cs_encoder = CSEncoder(encoder, gpu=True)
+        else:
+            raise NotImplementedError
+
+    def norm_embed(self, std):
+        embed_np = []
+        for instance in self.instances:
+            embed_np.append(instance.build_context_embed_np())
+        embed_np = np.concatenate(embed_np, axis=0)
+        if std is None:
+            std = np.std(embed_np)
+        for instance in self.instances:
+            instance.context_embed_np = instance.context_embed_np / std
+        return std
+
+    # TODO ugly code here
+    def kmeans(self, kcluster: int, random_seed: int) -> KMeans:
+        embed_np = []
+        for instance in self.instances:
+            embed_np.append(instance.build_context_embed_np())
+        embed_np = np.concatenate(embed_np, axis=0)
+        kmeans = KMeans(n_clusters=kcluster, random_state=random_seed).fit(embed_np)
+        return kmeans
+
+    def kmeans_label(self, kmeans: KMeans):
+        for instance in self.instances:
+            labels = kmeans.predict(instance.build_context_embed_np())
+            instance.kcluster_label = labels
+
+
+    @staticmethod
+    def collect_fn(batch_raw_data: List[ScidtbInstanceWithEmb]):
+
+        id_array = torch.tensor([d.id for d in batch_raw_data])
+        len_array = torch.tensor([len(d) for d in batch_raw_data])
+
+        first_word_np = [ins.first_word_np for ins in batch_raw_data]
+        if first_word_np[0] is None:
+            first_word_array = None
+        else:
+            pad = batch_raw_data[0].ds.word_vocab["<unk>"]
+            first_word_array = pad_sequence(list(map(torch.tensor, first_word_np)), True, pad)
+
+        end_word_np = [ins.end_word_np for ins in batch_raw_data]
+        if end_word_np[0] is None:
+            end_word_array = None
+        else:
+            pad = batch_raw_data[0].ds.word_vocab["<unk>"]
+            end_word_array = pad_sequence(list(map(torch.tensor, end_word_np)), True, pad)
+
+        head_word_np = [ins.head_pos_np for ins in batch_raw_data]
+        if head_word_np[0] is None:
+            head_word_array = None
+        else:
+            pad = batch_raw_data[0].ds.word_vocab["<unk>"]
+            head_word_array = pad_sequence(list(map(torch.tensor, head_word_np)), True, pad)
+
+        first_pos_np = [ins.first_pos_np for ins in batch_raw_data]
+        if first_pos_np[0] is None:
+            first_pos_array = None
+        else:
+            pad = batch_raw_data[0].ds.pos_vocab["<unk>"]
+            first_pos_array = pad_sequence(list(map(torch.tensor, first_pos_np)), True, pad)
+
+        end_pos_np = [ins.end_pos_np for ins in batch_raw_data]
+        if end_word_np[0] is None:
+            end_pos_array = None
+        else:
+            pad = batch_raw_data[0].ds.pos_vocab["<unk>"]
+            end_pos_array = pad_sequence(list(map(torch.tensor, end_pos_np)), True, pad)
+
+        head_pos_np = [ins.head_pos_np for ins in batch_raw_data]
+        if head_pos_np[0] is None:
+            head_pos_array = None
+        else:
+            pad = batch_raw_data[0].ds.pos_vocab["<unk>"]
+            head_pos_array = pad_sequence(list(map(torch.tensor, head_pos_np)), True, pad)
+
+        head_deprel_np = [ins.head_deprel_np for ins in batch_raw_data]
+        if head_deprel_np[0] is None:
+            head_deprel_array = None
+        else:
+            pad = batch_raw_data[0].ds.deprel_vocab["<unk>"]
+            head_deprel_array = pad_sequence(list(map(torch.tensor, head_deprel_np)), True, pad)
+
+        edus_list = [ins.edus_list for ins in batch_raw_data]
+        if edus_list[0] is None:
+            edus_array = None
+        else:
+            pad = batch_raw_data[0].ds.word_vocab["<unk>"]
+            max_len = max(list(map(max, [list(map(len, edus_ins)) for edus_ins in edus_list])))
+            # padding to same size [batch, max_edu, max_len]
+            for edus_ins in edus_list:
+                for idx, edu in enumerate(edus_ins):
+                    edus_ins[idx] = edu + [pad] * (max_len - len(edu))
+
+            edus_array = pad_sequence(list(map(torch.tensor, edus_list)), batch_first=True, padding_value=pad).long()
+
+        edus_len_np = [ins.edus_len_np for ins in batch_raw_data]
+        if edus_len_np[0] is None:
+            edus_len_array = None
+        else:
+            pad = 0
+            edus_len_array = pad_sequence(list(map(torch.tensor, edus_len_np)), batch_first=True, padding_value=pad).long()
+
+        sent_map_np = [ins.sent_map_np for ins in batch_raw_data]
+        # if sent_map_np[0] is None:
+        #     sent_map_array = None
+        # else:
+        #     pad = 0
+        #     sent_len = max(list(map(max, [list(map(len, sent_map_ins)) for sent_map_ins in sent_map_np])))
+        #     for idx, sent_map_ins in enumerate(sent_map_np):
+        #         x, y = sent_map_ins.shape
+        #         zeros = np.zeros((x, sent_len-y))
+        #         sent_map_np[idx] = np.concatenate((sent_map_ins, zeros), axis=1)
+        #     sent_map_array = pad_sequence(list(map(torch.tensor, sent_map_np)), batch_first=True, padding_value=pad).long()
+        if sent_map_np[0] is None:
+            sent_map_array = None
+        else:
+            pad = -100
+            # maxlen = max([sent_map_ins.shape[0] for sent_map_ins in sent_map_np])
+            sent_map_array = pad_sequence(list(map(torch.tensor, sent_map_np)), batch_first=True, padding_value=pad).long()
+
+        context_embed_np = [ins.build_context_embed_np() for ins in batch_raw_data]
+        if context_embed_np is None:
+            context_embed_array = None
+        else:
+            pad = 0.0
+            context_embed_array = pad_sequence(list(map(torch.tensor, context_embed_np)), batch_first=True, padding_value=pad)
+
+        kcluster_label_np = [ins.kcluster_label for ins in batch_raw_data]
+        if kcluster_label_np[0] is None:
+            kcluster_label_array = None
+        else:
+            pad = 0
+            kcluster_label_array = pad_sequence(list(map(torch.tensor, kcluster_label_np)), True, pad).long()
+        return ScidtbDatasetWithEmbBatchData(id_array=id_array, pos_array=None, word_array=None, len_array=len_array,
+                                             first_word_array=first_word_array, end_word_array=end_word_array,
+                                             head_word_array=head_word_array, first_pos_array=first_pos_array,
+                                             end_pos_array=end_pos_array, head_pos_array=head_pos_array,
+                                             head_deprel_array=head_deprel_array, edus_len_array=edus_len_array,
+                                             edus_array=edus_array, sent_map_array=sent_map_array,
+                                             context_embed_array=context_embed_array,
+                                             kcluster_label_array=kcluster_label_array)
+
 

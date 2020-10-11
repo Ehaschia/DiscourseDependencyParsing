@@ -1528,11 +1528,10 @@ def calculate_uas(pred: List[List[int]], gold: List[List[int]]) -> Tuple[float, 
         assert len(pred_one) == len(gold_one), "`pred` mismatch `gold`"
         if len(gold_one) <= 1:
             continue
-        # TODO fix here
         for pred_parent, gold_parent in zip(pred_one, gold_one):
-            if pred_parent == gold_parent[0]:
+            if pred_parent == gold_parent:
                 correct += 1
-                if gold_parent[0] == 0:
+                if gold_parent == 0:
                     correct_root += 1
             # if pred_parent > len(gold_one):
             #     utils.ex.logger.warning('find bad arc')
