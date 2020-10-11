@@ -5,7 +5,7 @@ import hashlib
 import json
 import logging
 from functools import reduce
-from logging import getLogger, Formatter, StreamHandler, DEBUG
+from logging import getLogger, Formatter, StreamHandler, INFO
 import os
 import re
 import sys
@@ -27,10 +27,10 @@ import random
 from torch import Tensor
 
 logger = getLogger("logger")
-logger.setLevel(DEBUG)
+logger.setLevel(INFO)
 
 handler = StreamHandler()
-handler.setLevel(DEBUG)
+handler.setLevel(INFO)
 handler.setFormatter(Formatter(fmt="%(message)s"))
 logger.addHandler(handler)
 
@@ -39,7 +39,7 @@ def writelog(text):
     :type text: str
     :rtype: None
     """
-    logger.debug("%s" % text)
+    logger.info("%s" % text)
 
 def set_logger(filename):
     if os.path.exists(filename):
@@ -1592,8 +1592,7 @@ def scatter_add(a: Tensor, indices: Sequence[Union[torch.LongTensor, int]], valu
 
 # noinspection PyUnresolvedReferences
 def set_seed(trial_name):
-    random_seed = trial_name
-    random_seed = hash_string(random_seed)
+    random_seed = hash_string(trial_name)
     random.seed(random_seed)
     np.random.seed(random_seed)
     torch.manual_seed(random_seed)

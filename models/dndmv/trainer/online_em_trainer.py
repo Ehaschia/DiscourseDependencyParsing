@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -44,8 +44,10 @@ class OnlineEMTrainer(object):
         num_workers = 4  # num_workers of DataLoader
         device = 'cuda'
 
-    def __init__(self, cfg: Dict, dmv: DMV, nn: DiscriminativeNeuralDMV, converter: Callable, train_ds: ScidtbDataset,
-                 test_ds: ScidtbDataset, dev_ds: Optional[ScidtbDataset] = None):
+    def __init__(self, cfg: Dict, dmv: DMV, nn: DiscriminativeNeuralDMV, converter: Callable,
+                 train_ds: Union[ConllDataset, ScidtbDataset],
+                 test_ds: Union[ConllDataset, ScidtbDataset],
+                 dev_ds: Union[ConllDataset, ScidtbDataset, None] = None):
         """
         :param cfg: config dict
         :param dmv: dmv model

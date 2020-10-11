@@ -51,7 +51,7 @@ class TreeSampler(object):
         else:
             raise ValueError("Invalid sampler_name=%s" % sampler_name)
 
-    def sample(self, inputs, edus, edus_head, sbnds, pbnds):
+    def sample(self, inputs, edus, edus_head, sbnds, pbnds, has_root=False):
         """
         :type inputs: list of int
         :type edus: list of list of str
@@ -62,12 +62,16 @@ class TreeSampler(object):
         """
 
         rules = []
-        head = inputs[0]
+        head = inputs[0] if has_root else 0
         assert len(inputs) > 1
         self.arc_score = np.random.rand(len(inputs), len(inputs))
-        noroot_inputs = copy.deepcopy(inputs)[1:]
-        noroot_edus = copy.deepcopy(edus)[1:] if edus is not None else None
-        noroot_edus_head = copy.deepcopy(edus_head)[1:] if edus_head is not None else None
+        noroot_inputs = copy.deepcopy(inputs)[1:] if has_root else copy.deepcopy(inputs)
+        noroot_edus = None
+        if edus is not None:
+            noroot_edus = copy.deepcopy(edus)[1:] if has_root else copy.deepcopy(edus)
+        noroot_edus_head = None
+        if edus_head is None:
+            noroot_edus_head = copy.deepcopy(edus_head)[1:] if has_root else copy.deepcopy(edus_head)
 
         # Sentence-level sampling
         if self.use_sbnds:

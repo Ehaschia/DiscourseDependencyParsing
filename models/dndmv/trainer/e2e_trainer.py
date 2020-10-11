@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple, List
+from typing import Callable, Dict, Optional, Tuple, List, Union
 
 import torch
 from torch import Tensor
@@ -8,7 +8,7 @@ from easydict import EasyDict
 import utils
 from models.dndmv.dmv import DMV
 from models.dndmv.dndmv import DiscriminativeNeuralDMV
-from utils.data import ConllDataset, prefetcher
+from utils.data import ConllDataset, prefetcher, ScidtbDataset
 from utils.utils import calculate_uas, make_sure_dir_exists, namedtuple2dict
 
 
@@ -42,7 +42,9 @@ class OnlineEMTrainer(object):
         device = 'cuda'
 
     def __init__(self, cfg: Dict, dmv: DMV, nn: DiscriminativeNeuralDMV, converter: Callable,
-            train_ds: ConllDataset, test_ds: ConllDataset, dev_ds: Optional[ConllDataset] = None):
+                 train_ds: Union[ConllDataset, ScidtbDataset],
+                 test_ds: Union[ConllDataset, ScidtbDataset],
+                 dev_ds: Union[ConllDataset, ScidtbDataset, None] = None):
         """
         :param cfg: config dict
         :param dmv: dmv model
@@ -73,7 +75,7 @@ class OnlineEMTrainer(object):
         make_sure_dir_exists(self.workspace)
         make_sure_dir_exists(self.workspace / 'best_uas')
         make_sure_dir_exists(self.workspace / 'best_ll')
-        # make_sure_dir_exists(self.workspace / 'all')
+        make_sure_dir_exists(self.workspace / 'all')
 
     def train(self, epoch: Optional[int] = None, report: bool = True, stop_hook: Optional[Callable] = None, subepoch: Optional[int] = None) -> None:
         """ train the model
@@ -151,11 +153,11 @@ class OnlineEMTrainer(object):
             #     f'{"using end2end" if self.cfg.end2end else f"run {nn_total_epoch / n_batch:.2f} epochs"}')
             # utils.ex.log_scalar('train.loss', nn_loss, epoch_id)
             # utils.ex.log_scalar('train.likelihood', model_ll, epoch_id)
-            print(f'epoch {epoch_id}, train.loss={nn_loss}, train.likelihood={model_ll}, run {nn_total_epoch / n_batch:.2f} epochs')
+            utils.writelog(f'epoch {epoch_id}, train.loss={nn_loss}, train.likelihood={model_ll}, run {nn_total_epoch / n_batch:.2f} epochs')
 
-            # torch.save(self.dmv.state_dict(), self.workspace / 'all' / f'dmv_{epoch_id}')
-            # torch.save(self.nn.state_dict(), self.workspace / 'all' / f'nn_{epoch_id}')
-            # torch.save(torch.cuda.memory_snapshot(), self.workspace / 'all' / f'ss_{epoch_id}')
+            torch.save(self.dmv.state_dict(), self.workspace / 'all' / f'dmv_{epoch_id}')
+            torch.save(self.nn.state_dict(), self.workspace / 'all' / f'nn_{epoch_id}')
+            torch.save(torch.cuda.memory_snapshot(), self.workspace / 'all' / f'ss_{epoch_id}')
 
             if model_ll > best_ll:
                 # utils.ex.logger.info('get new best ll')
@@ -172,7 +174,7 @@ class OnlineEMTrainer(object):
                 # utils.ex.log_scalar('dev.uas', uas_dev, epoch_id)
                 # utils.ex.log_scalar('test.uas', uas_test, epoch_id)
 
-                print(f'epoch {epoch_id}, train.uas= {uas_train}, dev.uas={uas_dev}, test.uas={uas_test}')
+                utils.writelog(f'epoch {epoch_id}, train.uas= {uas_train}, dev.uas={uas_dev}, test.uas={uas_test}')
                 # nni.report_intermediate_result(uas_test)
 
                 if uas_test > best_uas:
@@ -286,7 +288,7 @@ class OnlineEMTrainer(object):
                 uas_dev, ll_dev = self.evaluate(self.dev_ds)
                 uas_test, ll_test = self.evaluate(self.test_ds)
                 # utils.ex.logger.info(f'init epoch {epoch_id}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
-                print(f'init epoch {epoch_id}, init.train.uas= {uas_train}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
+                utils.logger.info(f'init epoch {epoch_id}, init.train.uas= {uas_train}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
                 # utils.ex.log_scalar('init.dev.uas', uas_dev, epoch_id)
                 # utils.ex.log_scalar('init.test.uas', uas_test, epoch_id)
 
@@ -321,7 +323,7 @@ class OnlineEMTrainer(object):
 
         return nn_loss_current, epoch_id  # noqa
 
-    def evaluate(self, dataset: ConllDataset, prefer_nn: bool = True) -> Tuple[float, float]:
+    def evaluate(self, dataset: Union[ConllDataset, ScidtbDataset], prefer_nn: bool = True) -> Tuple[float, float]:
         self.nn.eval()
 
         pred, ll_sum = [], 0.

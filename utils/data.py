@@ -639,13 +639,13 @@ class ScidtbInstance:
     #     return iter(self.entry)
 
     def __repr__(self):
-        return f'ScidtbInstance(id={self.id}, len={len(self)})'
+        return f'ScidtbInstance(id={self.id}, name={self.entry.name}, len={len(self)})'
 
     def __str__(self):
-        return f'ScidtbInstance(str={" ".join(self.__getattr__("norm"))})'
+        return f'ScidtbInstance(str={" ".join(self._edus_list)})'
 
     def __hash__(self):
-        return hash('\t'.join(self.form))
+        return hash(self.entry.name)
 
     def __getattr__(self, item):
         return getattr(self.entry, item)
@@ -787,17 +787,17 @@ class ScidtbInstance:
     #     return self._sent_map_np
 
     @property
-    def sent_map_np(self) -> Optional[List[Tuple[int, int]]]:
+    def sent_map_np(self) -> Optional[np.ndarray]:
         if self._sent_map_np is None:
             self._sent_map_np = np.array(self.sbnds)
         return self._sent_map_np
 
 class ScidtbDataset(Dataset):
-    def __init__(self, instanceList: List[DataInstance], vocab_word: OrderedDict= None, vocab_postag: OrderedDict= None,
+    def __init__(self, instance_list: List[DataInstance], vocab_word: OrderedDict= None, vocab_postag: OrderedDict= None,
                  vocab_deprel: OrderedDict= None, vocab_relation: OrderedDict= None):
         # cache: only cache instances
         self.instances = []
-        for idx, instance in enumerate(instanceList):
+        for idx, instance in enumerate(instance_list):
             self.instances.append(ScidtbInstance(idx, instance, self))
         self.word_vocab = vocab_word
         self.pos_vocab = vocab_postag
@@ -918,7 +918,6 @@ class ScidtbDataset(Dataset):
             sent_map_array = None
         else:
             pad = -100
-            # maxlen = max([sent_map_ins.shape[0] for sent_map_ins in sent_map_np])
             sent_map_array = pad_sequence(list(map(torch.tensor, sent_map_np)), batch_first=True, padding_value=pad).long()
         return ScidtbDatasetBatchData(id_array=id_array, pos_array=None, word_array=None, len_array=len_array,
                                       first_word_array=first_word_array, end_word_array=end_word_array,
@@ -946,6 +945,7 @@ class ScidtbInstanceWithEmb(ScidtbInstance):
     # https://python3-cookbook.readthedocs.io/zh_CN/latest/c08/p08_extending_property_in_subclass.html
     # @property
     # endpoint method concat begin and end [e_i, e_j]
+    # TODO different encoding method implement
     def build_context_embed_np(self) -> Optional[np.ndarray]:
         if self.ds.cs_encoder is None:
             return None
@@ -961,11 +961,11 @@ class ScidtbInstanceWithEmb(ScidtbInstance):
 
 
 class ScidtbDatasetWithEmb(ScidtbDataset):
-    def __init__(self, instanceList: List[DataInstance], vocab_word: OrderedDict= None, vocab_postag: OrderedDict=None,
-             vocab_deprel: OrderedDict=None, vocab_relation: OrderedDict=None, encoder: str='bert'):
-        super().__init__(instanceList, vocab_word, vocab_postag, vocab_deprel, vocab_relation)
+    def __init__(self, instance_list: List[DataInstance], vocab_word: OrderedDict= None, vocab_postag: OrderedDict=None,
+                 vocab_deprel: OrderedDict=None, vocab_relation: OrderedDict=None, encoder: str='bert'):
+        super().__init__(instance_list, vocab_word, vocab_postag, vocab_deprel, vocab_relation)
         self.instances = []
-        for idx, instance in enumerate(instanceList):
+        for idx, instance in enumerate(instance_list):
             self.instances.append(ScidtbInstanceWithEmb(idx, instance, self))
         if encoder == 'bert':
             self.cs_encoder = CSEncoder(encoder, gpu=True)
@@ -983,7 +983,6 @@ class ScidtbDatasetWithEmb(ScidtbDataset):
             instance.context_embed_np = instance.context_embed_np / std
         return std
 
-    # TODO ugly code here
     def kmeans(self, kcluster: int, random_seed: int) -> KMeans:
         embed_np = []
         for instance in self.instances:
@@ -996,7 +995,6 @@ class ScidtbDatasetWithEmb(ScidtbDataset):
         for instance in self.instances:
             labels = kmeans.predict(instance.build_context_embed_np())
             instance.kcluster_label = labels
-
 
     @staticmethod
     def collect_fn(batch_raw_data: List[ScidtbInstanceWithEmb]):

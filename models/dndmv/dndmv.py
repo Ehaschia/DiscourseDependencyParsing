@@ -68,8 +68,12 @@ class DiscriminativeNeuralDMV(nn.Module):
         self.emb_to_lstm = nn.Linear(self.cfg.dim_word_emb, self.cfg.lstm_dim_in)
         # chage dim same as word_emb due to the kcluster
         if 'pos' in emb:
-            self.pos_emb = nn.Embedding.from_pretrained(emb['pos'], freeze=self.cfg.freeze_pos_emb)
-            assert self.pos_emb.weight.shape[1] == self.cfg.dim_pos_emb
+            if self.cfg.pca:
+                u, s, v = torch.pca_lowrank(torch.tensor(emb['pos']), self.cfg.dim_pos_emb)
+            else:
+                u = emb['pos']
+            self.pos_emb = nn.Embedding.from_pretrained(u, freeze=self.cfg.freeze_pos_emb)
+            # assert self.pos_emb.weight.shape[1] == self.cfg.dim_pos_emb
         else:
             self.pos_emb = nn.Embedding(self.cfg.kcluster, self.cfg.dim_word_emb)
         self.emb_to_pos = nn.Linear(self.cfg.dim_word_emb, self.cfg.dim_pos_emb)
@@ -98,8 +102,7 @@ class DiscriminativeNeuralDMV(nn.Module):
 
         self.left_right_linear = nn.Linear(self.emb_dim, 2 * self.cfg.dim_hidden)
 
-        # separete layer
-
+        # separate layer
         if 'd' in self.mode:
             self.decision_linear = nn.Linear(self.cfg.dim_hidden, self.cfg.dim_pre_out_decision)
             self.decision_out_linear = nn.Linear(self.cfg.dim_pre_out_decision, 2)
@@ -129,9 +132,6 @@ class DiscriminativeNeuralDMV(nn.Module):
 
         self.activate = ACTIVATION_DICT[self.cfg.activation_func]
         self.dropout = nn.Dropout(self.cfg.dropout)
-
-        # TODO just for debug
-        self.cs_embedding = None
 
         # self.word_idx, self.pos_idx = None, None
 
@@ -206,9 +206,11 @@ class DiscriminativeNeuralDMV(nn.Module):
 
         edu_vectors = self.context_embedding(arrays)
         lstm_in = self.activate(self.dropout(self.emb_to_lstm(edu_vectors)))
-        self.cs_embedding = edu_vectors
         _, sent_emb = self.lstm_s(lstm_in, len_array)
-        embs = [self.dropout(self.emb_to_pos(edu_vectors)), sent_emb]
+        pos_embeds = self.pos_emb(tag_array)
+        if not self.cfg.pca:
+            pos_embeds = self.emb_to_pos(pos_embeds)
+        embs = [self.dropout(pos_embeds), sent_emb]
 
         params = {}
         if 'd' in mode and 'd' in self.mode:
@@ -359,7 +361,6 @@ class DiscriminativeNeuralDMV(nn.Module):
             direction_array = direction_array.view(-1)
             out['d'] = direction_array
         if 'v' in mode:
-            # TODO the valence may bigger than 2 in discourse parsing
             valence_array = torch.zeros(
                 batch_size * max_len * 2, 2, dtype=torch.long, device=self.cfg.device)
             valence_array[:, 1] = 1
@@ -388,7 +389,6 @@ class DiscriminativeNeuralDMV(nn.Module):
             out['d'] = direction_array
         if 'v' in mode:
             if self.cfg.cv == 2:
-                # TODO the valence may bigger than 2 in discourse parsing
                 valence_array = torch.zeros(batch_size * max_len * 2, self.cfg.cv, dtype=torch.long,
                     device=self.cfg.device)
                 valence_array[:, 1] = 1

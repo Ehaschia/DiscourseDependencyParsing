@@ -1,6 +1,8 @@
 import argparse
 import os
 import time
+import shutil
+from pathlib import Path
 from datetime import datetime
 from typing import Dict, List
 from ast import literal_eval
@@ -8,6 +10,7 @@ from ast import literal_eval
 # import chainer
 # import chainer.functions as F
 # from chainer import cuda, optimizers, serializers
+import jsonlines
 import torch
 
 import dataloader
@@ -23,54 +26,22 @@ def dndmv_main(args):
     ##################
     # Arguments
     model_name = "debug"
-
     path_config = args.config
-    trial_name = None
-
-
-    if trial_name is None or trial_name == "None":
-        trial_name = utils.get_current_time()
-
-    ##################
-    # Path setting
     cfg = dndmv_config(utils.Config(path_config))
 
-    basename = "%s.%s.%s" \
-            % (model_name,
-               utils.get_basename_without_ext(path_config),
-               trial_name)
-
-    path_log = os.path.join(cfg["results"], basename + ".training.log")
-    path_train = os.path.join(cfg["results"], basename + ".training.jsonl")
-    path_valid = os.path.join(cfg["results"], basename + ".validation.jsonl")
-    path_snapshot = os.path.join(cfg["results"], basename + ".model")
-    path_pred = os.path.join(cfg["results"], basename + ".evaluation.arcs")
-    path_eval = os.path.join(cfg["results"], basename + ".evaluation.json")
-
+    path_log = os.path.join(cfg["workspace"], "training.log")
+    path_final = os.path.join(cfg["workspace"], "final.json")
     utils.set_logger(path_log)
+    # move setting
+    shutil.copy(path_config, cfg["workspace"])
 
     ##################
     # Random seed
-    utils.set_seed(trial_name)
-
-    ##################
-    # Log so far
-    utils.writelog("model_name=%s" % model_name)
-    utils.writelog("path_config=%s" % path_config)
-    utils.writelog("trial_name=%s" % trial_name)
-
-    utils.writelog("path_log=%s" % path_log)
-    utils.writelog("path_train=%s" % path_train)
-    utils.writelog("path_valid=%s" % path_valid)
-    utils.writelog("path_snapshot=%s" % path_snapshot)
-    utils.writelog("path_pred=%s" % path_pred)
-    utils.writelog("path_eval=%s" % path_eval)
-
+    utils.set_seed(cfg["workspace"])
     ##################
     # Data preparation
 
-    train_dataset, dev_dataset, test_dataset = load_scidtb(cfg)
-
+    train_dataset, dev_dataset, test_dataset, kmeans = load_scidtb(cfg)
 
     ##################
     # Model preparation
@@ -80,7 +51,9 @@ def dndmv_main(args):
     # dmv and dndmv
     dmv = DMV(cfg, cfg["dmv_mode"]).cuda()
     dmv.train()
-    nn = DiscriminativeNeuralDMV(cfg, {}, cfg["nn_mode"]).cuda()
+    # pos embed
+    pos_embed = kmeans.cluster_centers_
+    nn = DiscriminativeNeuralDMV(cfg, {'pos': torch.from_numpy(pos_embed)}, cfg["nn_mode"]).cuda()
     # nn = DiscriminativeNeuralDMV(dict_cfg, {"word": torch.from_numpy(initialW)}, cfg.getstr("nn_mode")).cuda()
     nn.optimizer = torch.optim.Adam(nn.parameters(), cfg["lr"])
 
@@ -89,7 +62,9 @@ def dndmv_main(args):
 
     # train
     uas_dmv, ll_dmv = trainer.evaluate(test_dataset, prefer_nn=False)
-    # uas_nn, ll_nn = trainer.evaluate(test_dataset, prefer_nn=True)
+    utils.writelog(f"random dmv test.uas={uas_dmv}, ll={ll_dmv}")
+    uas_nn, ll_nn = trainer.evaluate(test_dataset, prefer_nn=True)
+    utils.writelog(f"random dmv test.uas={uas_nn}, ll={ll_dmv}")
 
     # trainer.init_train(cfg.getint("epoch_init"))
     trainer.init_train_v2(train_dataset, cfg["epoch_init"], True)
@@ -98,8 +73,17 @@ def dndmv_main(args):
     # evaluate
     dmv.load_state_dict(torch.load(trainer.workspace / 'best_ll' / 'dmv'))
     nn.load_state_dict(torch.load(trainer.workspace / 'best_ll' / 'nn'))
-    final_uas, final_ll = trainer.evaluate(test_dataset, prefer_nn=True)
+    best_ll_uas, best_ll_ll = trainer.evaluate(test_dataset, prefer_nn=True)
+    utils.writelog(f"final ll best dmv test.uas={best_ll_uas}, ll={best_ll_ll}")
 
+    dmv.load_state_dict(torch.load(trainer.workspace / 'best_uas' / 'dmv'))
+    nn.load_state_dict(torch.load(trainer.workspace / 'best_uas' / 'nn'))
+    best_uas_uas, best_uas_ll = trainer.evaluate(test_dataset, prefer_nn=True)
+    utils.writelog(f"final uas best dmv test.uas={best_uas_uas}, ll={best_uas_ll}")
+
+    final_uas = jsonlines.Writer(open(path_final, "w"), flush=True)
+    final_uas.write({"final_uas": max(best_ll_uas, best_uas_uas)})
+    final_uas.close()
 
 
 def dndmv_config(config: utils.Config) -> Dict:
@@ -109,6 +93,7 @@ def dndmv_config(config: utils.Config) -> Dict:
     cfg["workspace"] = f'output/dndmv/{datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")}'
     while os.path.exists(cfg["workspace"]):
         cfg["workspace"] += 'r'
+    utils.make_sure_dir_exists(Path(cfg["workspace"]))
     return cfg
 
 def load_scidtb(cfg: Dict):
@@ -138,10 +123,10 @@ def load_scidtb(cfg: Dict):
     std = train_dataset.norm_embed(None)
     dev_dataset.norm_embed(std)
     test_dataset.norm_embed(std)
-    kmeas = train_dataset.kmeans(cfg["kcluster"], 42)
-    train_dataset.kmeans_label(kmeas)
-    dev_dataset.kmeans_label(kmeas)
-    test_dataset.kmeans_label(kmeas)
+    kmeans = train_dataset.kmeans(cfg["kcluster"], 42)
+    train_dataset.kmeans_label(kmeans)
+    dev_dataset.kmeans_label(kmeans)
+    test_dataset.kmeans_label(kmeans)
     end_time = time.time()
     utils.writelog("Loaded the corpus. %f [sec.]" % (end_time - begin_time))
 
@@ -153,11 +138,10 @@ def load_scidtb(cfg: Dict):
 
     # cfg cluster
 
-    return train_dataset, dev_dataset, test_dataset
+    return train_dataset, dev_dataset, test_dataset, kmeans
 
 def remove_root(dataset: List[utils.DataInstance]):
     for ins in dataset:
-        # print(ins)
         ins.edus = ins.edus[1:]
         ins.edus_head = ins.edus_head[1:]
         ins.edus_postag = ins.edus_postag[1:]
