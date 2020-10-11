@@ -76,11 +76,12 @@ class DMV(nn.Module):
         :return: likelihood for each instance
         """
         mode = 'sum' if self.cfg.e_step_mode == 'em' else 'max'
+        # *_, prob = batch_inside(final_trans_scores, final_dec_scores, len_array, mode)
         *_, prob = batch_inside(final_trans_scores, final_dec_scores, len_array, mode)
         return prob
 
-    def parse(self, final_trans_scores: Tensor, final_dec_scores: Tensor, len_array: Tensor) \
-            -> Tuple[List[List[int]], float]:
+    def parse(self, final_trans_scores: Tensor, final_dec_scores: Tensor, len_array: Tensor,
+              sent_map_array:Optional[Tensor]=None) -> Tuple[List[List[int]], float]:
         """final_scores contain ROOT compared to scores"""
 
         ## BP to get counts
@@ -103,8 +104,10 @@ class DMV(nn.Module):
         # ll = ll.item()
 
         ## Directly calculate counts
-        heads, head_valences, valences = batch_parse(final_trans_scores, final_dec_scores, len_array)
-        heads = heads.detach().cpu().numpy()
+        # heads, head_valences, valences = batch_parse(final_trans_scores, final_dec_scores, len_array)
+        sent_map_np = sent_map_array.cpu().detach().numpy()
+        heads, head_valences, valences = batch_discourse_parse(final_trans_scores, final_dec_scores, len_array, sent_map_np)
+        # heads = heads.detach().cpu().numpy()
         result2 = []
         len_array = len_array.cpu()
         for i, r in enumerate(heads):
@@ -573,7 +576,10 @@ class DMV(nn.Module):
         for idx, instance in enumerate(dataset):
             # one_heads = npasarray(list(map(int, getattr(instance, predicted))))
             one_heads = sampler.sample(inputs=instance.edu_ids, edus=instance.edus,
-                                       edus_head=instance.edus_head, sbnds=instance.sbnds, pbnds=instance.pbnds)
+                                       edus_head=instance.edus_head, sbnds=instance.sbnds, pbnds=instance.pbnds,
+                                       has_root=False)
+            # one_heads = instance.arcs
+
             one_heads = np.asarray([rule[0] for rule in sorted(one_heads, key=lambda x: x[1])])
             one_valences, one_head_valences = self.recovery_one(one_heads)
             heads[idx, 1:len(instance) + 1] = one_heads
@@ -793,6 +799,128 @@ def constituent_index(fake_len: int) -> Tuple[
 
     return span2id, id2span, ijss, ikcs, ikis, kjcs, kjis, basic_span
 
+def valid_check(sbnds, left, right, complete=True):
+    inner = False
+    for sbnd_begin, sbnd_end in sbnds:
+        if sbnd_begin <= left <= right <= sbnd_end:
+            inner = True
+            break
+    if inner and not complete:
+        return False
+    return True
+
+# consider sbnd boundary
+def discourse_constituent_index(dlen: int, sbnds: List[Tuple[int, int]]) -> Tuple[
+    np.ndarray, np.ndarray, List[int], List[List[int]], List[List[int]],
+    List[List[int]], List[List[int]], np.ndarray]:
+    """generate span(left,right,direction) index"""
+
+    id2span = []
+    span2id = npiempty((dlen, dlen, 2))
+    root_shifted_sbnds = [(begin+1, end+1) for begin, end in sbnds]
+    root_shifted_sbnds = [(0, 0)] + root_shifted_sbnds
+    # this part consider inner sentence span
+    # ignore -1
+    for sbnd_begin, sbnd_end in root_shifted_sbnds:
+        if sbnd_begin < 0:
+            break
+        for left_idx in range(sbnd_begin, sbnd_end+1):
+            for right_idx in range(left_idx, sbnd_end+1):
+                for direction in range(2): # 0 is left 1 is right
+                    span2id[left_idx, right_idx, direction] = len(id2span)
+                    id2span.append([left_idx, right_idx, direction])
+    # this part consider cross sentence span
+    for sbnd_begin, sbnd_end in root_shifted_sbnds:
+        if sbnd_begin < 0:
+            break
+        for left_idx in range(sbnd_begin, sbnd_end+1):
+            for right_idx in range(sbnd_end+1, dlen):
+                for direction in range(2):
+                    span2id[left_idx, right_idx, direction] = len(id2span)
+                    id2span.append([left_idx, right_idx, direction])
+    id2span = npasarray(id2span)
+
+    basic_span = npiempty((2 * dlen))
+    for i in range(dlen):
+        basic_span[2 * i] = span2id[i, i, 0]
+        basic_span[2 * i + 1] = span2id[i, i, 1]
+
+    # the order of ijss is important
+    ijss = []
+    ikis = [[] for _ in range(len(id2span))]
+    kjis = [[] for _ in range(len(id2span))]
+    ikcs = [[] for _ in range(len(id2span))]
+    kjcs = [[] for _ in range(len(id2span))]
+
+    # we consider inner sentence then consider cross sentence
+    # inner sentence same to origin
+    for sbnd_begin, sbnd_end in root_shifted_sbnds:
+        if sbnd_begin < -1:
+            break
+        span_len = sbnd_end - sbnd_begin + 1
+        for length in range(1, span_len):
+            for i in range(sbnd_begin, sbnd_begin+span_len - length):
+                j = i + length
+                id = span2id[i, j, 0]
+                ijss.append(id)
+                for k in range(i, j):
+                    # two complete spans to form an incomplete span
+                    ikis[id].append(span2id[i, k, 1])
+                    kjis[id].append(span2id[k + 1, j, 0])
+                    # one complete span, one incomplete span to form a complete span
+                    ikcs[id].append(span2id[i, k, 0])
+                    kjcs[id].append(span2id[k, j, 0])
+                id = span2id[i, j, 1]
+                ijss.append(id)
+                for k in range(i, j + 1):
+                    # two complete spans to form an incomplete span
+                    if k < j and (i != 0 or k == 0):
+                        ikis[id].append(span2id[i, k, 1])
+                        kjis[id].append(span2id[k + 1, j, 0])
+                    # one incomplete span, one complete span to form a complete span
+                    if k > i:
+                        ikcs[id].append(span2id[i, k, 1])
+                        kjcs[id].append(span2id[k, j, 1])
+
+    # cross sentence part.
+    # only consider complete inner sentence span to cross sentence span
+    # ignore inner sentence span calculating
+    for length in range(1, dlen):
+        for i in range(0, dlen-length):
+            j = i + length
+            # in same span, continue
+            inner = False
+            for sbnd_begin, sbnd_end in root_shifted_sbnds:
+                if sbnd_begin <= i < j <= sbnd_end:
+                    inner = True
+                    break
+            if inner:
+                continue
+            id = span2id[i, j, 0]
+            ijss.append(id)
+            for k in range(i, j):
+                # two complete spans to form an incomplete span
+                ikis[id].append(span2id[i, k, 1])
+                kjis[id].append(span2id[k + 1, j, 0])
+                # one complete span, one incomplete span to form a complete span
+                if valid_check(root_shifted_sbnds, k, j, complete=False):
+                    ikcs[id].append(span2id[i, k, 0])
+                    kjcs[id].append(span2id[k, j, 0])
+            id = span2id[i, j, 1]
+            ijss.append(id)
+            for k in range(i, j + 1):
+                # two complete spans to form an incomplete span
+                if k < j and (i != 0 or k == 0):
+                    ikis[id].append(span2id[i, k, 1])
+                    kjis[id].append(span2id[k + 1, j, 0])
+                # one incomplete span, one complete span to form a complete span
+                # check valid
+                if k > i and valid_check(root_shifted_sbnds, i, k, complete=False):
+                    ikcs[id].append(span2id[i, k, 1])
+                    kjcs[id].append(span2id[k, j, 1])
+
+    return span2id, id2span, ijss, ikcs, ikis, kjcs, kjis, basic_span
+
 
 @lru_cache(maxsize=3)
 def prepare_backtracking(batch_size, fake_len):
@@ -888,6 +1016,78 @@ def batch_inside(trans_scores: Tensor, dec_scores: Tensor, len_array: Tensor, mo
     partition_score = torch.stack(partition_score)
     return ictable, iitable, partition_score
 
+
+def batch_discourse_inside(trans_scores: Tensor, dec_scores: Tensor, len_array: Tensor,
+                           sbnds_list: List[List[Tuple[int, int]]], mode: str = 'sum'):
+    # TODO here we not return the ic and iitable
+    dlen_list = len_array.detach().cpu().numpy().tolist()
+    partition_score_list = []
+    for idx, dlen in enumerate(dlen_list):
+        dlen += 1 # for root
+        *_, partition_score = discourse_inside(trans_scores[idx, :dlen, :dlen, :],
+                                               dec_scores[idx, :dlen, :dlen, :, :],
+                                               sbnds_list[idx], mode=mode)
+        partition_score_list.append(partition_score)
+    partition_scores = torch.stack(partition_score_list)
+    return None, None, partition_scores
+
+
+def discourse_inside(trans_scores: Tensor, dec_scores: Tensor, sbnds: List[Tuple[int, int]], mode: str = 'sum')\
+        -> Tuple[List[Optional[Tensor]], List[Optional[Tensor]], Tensor]:
+
+    # trans_scores: head, child, cv
+    # dec_scores:   head, direction, dv, decision
+    op = partial(torch.logsumexp, dim=0) if mode == 'sum' else lambda x: torch.max(x, dim=0)[0]
+    dlen, dlen, cv = trans_scores.shape
+    nspan = (dlen + 1) * dlen
+    span2id, id2span, ijss, ikcs, ikis, kjcs, kjis, basic_span = discourse_constituent_index(dlen, sbnds)
+
+    # complete/incomplete_table:   [nspan], batch, dv
+    ictable: List[Optional[Tensor]] = [None for _ in range(nspan)]
+    iitable: List[Optional[Tensor]] = [None for _ in range(nspan)]
+
+    for bs in basic_span:
+        ictable[bs] = dec_scores[id2span[bs, 0], id2span[bs, 2], :, STOP]
+
+    for ij in ijss:
+        l, r, direction = id2span[ij]
+
+        # two complete span to form an incomplete span, and add a new arc.
+        if direction == 0:
+            h, m = r, l
+            h_span_id, m_span_id = kjis[ij], ikis[ij]
+        else:
+            h, m = l, r
+            h_span_id, m_span_id = ikis[ij], kjis[ij]
+
+        """
+        get head-side spans, test whether l == r to build decision scores.
+        because head-side spans are complete span, if and only if l==r, head-side spans have no child generated.
+        """
+        h_valence = id2span[h_span_id]
+        h_valence = torch.tensor(h_valence[:, 0] != h_valence[:, 1], dtype=torch.long)
+        h_d_part = dec_scores[None, h, direction, h_valence, GO].transpose(0, 1)
+        h_part = get_many_span(ictable, h_span_id, (HASCHILD, None)) + h_d_part
+        m_part = get_many_span(ictable, m_span_id, (NOCHILD, None))
+
+        t_part = trans_scores[None, h, m]
+        iitable[ij] = op(h_part + m_part + t_part)
+
+        # one complete span and one incomplete span to form an bigger complete span.
+        if direction == 0:
+            h_span_id, m_span_id = kjcs[ij], ikcs[ij]
+        else:
+            h_span_id, m_span_id = ikcs[ij], kjcs[ij]
+        h_part = get_many_span(iitable, h_span_id)
+        m_part = get_many_span(ictable, m_span_id, (NOCHILD, None))
+        ictable[ij] = op(h_part + m_part)
+
+    # partition_score = [torch.sum(ictable[span2id[0, l, 1]][i, NOCHILD]) for i, l in enumerate(len_array)]
+    # partition_score = torch.stack(partition_score)
+    partition_score = torch.sum(ictable[span2id[0, dlen-1, 1]][NOCHILD])
+    return ictable, iitable, partition_score
+
+
 def batch_parse(trans_scores, dec_scores, len_array):
     assert CUDA_BACKTRACKING_READY, "dmv_extension is required, see /extension"
     # trans_scores: batch, head, child, cv
@@ -952,6 +1152,147 @@ def batch_parse(trans_scores, dec_scores, len_array):
     heads, head_valences, valences = dmv_extension.backtracking(incomplete_backtrack, complete_backtrack,
         merged_is, merged_is_index, merged_cs, merged_cs_index, root_id, id2span, shape, False)
     return heads, head_valences, valences
+
+
+def batch_discourse_parse(trans_scores, dec_scores, len_array, sbnds_list):
+    len_list = len_array.detach().cpu().numpy().tolist()
+    batch_trans_scores_np = trans_scores.detach().cpu().numpy()
+    batch_dec_scores_np = dec_scores.detach().cpu().numpy()
+    batch_heads, batch_head_valences, batch_valences = [], [], []
+    for idx, dlen in enumerate(len_list):
+        # here consider the root
+        dlen += 1
+        heads, head_valences, valences = discourse_parse(batch_trans_scores_np[idx][:dlen, :dlen, :],
+                                                         batch_dec_scores_np[idx][:dlen], sbnds_list[idx])
+        batch_heads.append(heads)
+        batch_head_valences.append(valences)
+        batch_valences.append(valences)
+    return batch_heads, batch_head_valences, batch_valences
+
+
+# not batch discourse parse on cpu
+def discourse_parse(trans_scores, dec_scores, sbnds):
+    # trans_scores: head, child, cv
+    # dec_scores: head, direction, dv, decision
+
+    dlen, dlen, cv = trans_scores.shape
+    nspan = (dlen + 1) * dlen
+    span2id, id2span, ijss, ikcs, ikis, kjcs, kjis, basic_span = discourse_constituent_index(dlen, sbnds)
+
+    complete_table = np.full((nspan, 2), -np.inf)
+    incomplete_table = np.full((nspan, 2), -np.inf)
+    complete_backtrack = np.full((nspan, 2), -1)
+    incomplete_backtrack = np.full((nspan, 2), -1)
+
+    iids = id2span[basic_span]
+    complete_table[basic_span, :] = dec_scores[iids[:, 0], iids[:, 2], :, STOP]
+
+    for ij in ijss:
+        l, r, direction = id2span[ij]
+
+        # two complete span to form an incomplete span, and add a new arc.
+        if direction == 0:
+            h, m = r, l
+            h_span_id, m_span_id = kjis[ij], ikis[ij]
+        else:
+            h, m = l, r
+            h_span_id, m_span_id = ikis[ij], kjis[ij]
+
+        ## valence: far to near
+        # span_i = complete_table[:, ikis[ij], NOCHILD, None] \
+        #     + complete_table[:, kjis[ij], HASCHILD, None] \
+        #     + trans_scores[:, h, m, None, :] \
+        #     + dec_scores[:, r, direction, None, :, GO]
+
+        ## valence: near to far
+        h_valence = id2span[h_span_id]
+        h_valence = (h_valence[:, 0] != h_valence[:, 1]) * 1
+        span_i = complete_table[h_span_id, HASCHILD, None] \
+                 + complete_table[m_span_id, NOCHILD, None] \
+                 + trans_scores[h, m, None, :] \
+                 + dec_scores[h, direction, h_valence, None, GO]
+
+        max_value = np.max(span_i, axis=0)
+        max_index = np.argmax(span_i, axis=0)
+        incomplete_backtrack[ij, :] = max_index
+        incomplete_table[ij, :] = max_value
+
+        # one complete span and one incomplete span to form bigger complete span
+        if direction == 0:
+            h_span_id, m_span_id = kjcs[ij], ikcs[ij]
+        else:
+            h_span_id, m_span_id = ikcs[ij], kjcs[ij]
+
+        span_c = complete_table[m_span_id, NOCHILD, None] + incomplete_table[h_span_id, :]
+        max_value = np.max(span_c, axis=0)
+        max_index = np.argmax(span_c, axis=0)
+        complete_backtrack[ij, :] = max_index
+        complete_table[ij, :] = max_value
+    heads = -np.ones((dlen))
+    head_valences = np.zeros((dlen))
+    valences = np.zeros((dlen, 2))
+    root_id = span2id[(0, dlen - 1, 1)]
+    discourse_backtracking(incomplete_backtrack, complete_backtrack, root_id, 0, 1, heads, head_valences,
+                           valences, ikcs, ikis, kjcs, kjis, id2span, span2id)
+    return heads, head_valences, valences
+
+
+def discourse_backtracking(incomplete_backtrack, complete_backtrack, span_id, decision_valence, complete,
+                 heads, head_valences, valences, ikcs, ikis, kjcs, kjis, id_2_span, span_2_id):
+    (l, r, dir) = id_2_span[span_id]
+    if l == r:
+        valences[l, dir] = decision_valence
+        return
+    if complete:
+        if dir == 0:
+            k = complete_backtrack[span_id, decision_valence]
+            # print 'k is ', k, ' complete left'
+            k_span = k
+            left_span_id = ikcs[span_id][k_span]
+            right_span_id = kjcs[span_id][k_span]
+            discourse_backtracking(incomplete_backtrack, complete_backtrack, left_span_id, 0, 1, heads,
+                                   head_valences, valences, ikcs, ikis, kjcs, kjis, id_2_span, span_2_id)
+            discourse_backtracking(incomplete_backtrack, complete_backtrack, right_span_id, decision_valence, 0, heads,
+                                   head_valences, valences, ikcs, ikis, kjcs, kjis, id_2_span, span_2_id)
+            return
+        else:
+            num_k = len(ikcs[span_id])
+            k = complete_backtrack[span_id, decision_valence]
+            # print 'k is ', k, ' complete right'
+            k_span = k
+            left_span_id = ikcs[span_id][k_span]
+            right_span_id = kjcs[span_id][k_span]
+            discourse_backtracking(incomplete_backtrack, complete_backtrack, left_span_id, decision_valence,
+                                   0, heads, head_valences, valences, ikcs, ikis, kjcs, kjis, id_2_span, span_2_id)
+            discourse_backtracking(incomplete_backtrack, complete_backtrack, right_span_id, 0, 1,
+                                   heads, head_valences, valences, ikcs, ikis, kjcs, kjis, id_2_span, span_2_id)
+            return
+    else:
+        if dir == 0:
+
+            k = incomplete_backtrack[span_id, decision_valence]
+            # print 'k is ', k, ' incomplete left'
+            heads[l] = r
+            head_valences[l] = decision_valence
+            left_span_id = ikis[span_id][k]
+            right_span_id = kjis[span_id][k]
+            discourse_backtracking(incomplete_backtrack, complete_backtrack, left_span_id, 0, 1, heads,
+                                   head_valences, valences, ikcs, ikis, kjcs, kjis, id_2_span, span_2_id)
+            discourse_backtracking(incomplete_backtrack, complete_backtrack, right_span_id, 1, 1, heads,
+                                   head_valences, valences, ikcs, ikis, kjcs, kjis, id_2_span, span_2_id)
+            return
+        else:
+            k = incomplete_backtrack[span_id, decision_valence]
+            # print 'k is', k, ' incomplete right'
+            heads[r] = l
+            head_valences[r] = decision_valence
+            left_span_id = ikis[span_id][k]
+            right_span_id = kjis[span_id][k]
+            discourse_backtracking(incomplete_backtrack, complete_backtrack, left_span_id, 1, 1, heads,
+                                   head_valences, valences, ikcs, ikis, kjcs, kjis, id_2_span, span_2_id)
+            discourse_backtracking(incomplete_backtrack, complete_backtrack, right_span_id, 0, 1, heads,
+                                   head_valences, valences, ikcs, ikis, kjcs, kjis, id_2_span, span_2_id)
+            return
 
 
 def batch_inside_prob(trans_scores, dec_scores, tag_prop, len_array, mode='sum', mode2='sum'):
@@ -1076,3 +1417,24 @@ def batch_inside_prob(trans_scores, dec_scores, tag_prop, len_array, mode='sum',
     partition_score = [op1(ictable[span2id[0, l, 1]][i, :, NOCHILD]) for i, l in enumerate(len_array)]
     partition_score = torch.stack(partition_score)
     return ictable, iitable, partition_score
+
+
+# # debug batch inside
+# if __name__ == '__main__':
+#     torch.random.manual_seed(42)
+#
+#     dlen = 5
+#     cv = 2
+#     dv = 2
+#     sbnds = [(0, 2), (3, 3)]
+#     tscore = -1.0 * torch.rand(dlen, dlen, cv)
+#     dscore = -1.0 * torch.rand(dlen, 2, dv, 2)
+#
+#     # gold = batch_inside(tscore.unsqueeze(0),
+#     #                     dscore.unsqueeze(0),
+#     #                     torch.tensor([dlen]).long())
+#     tscore_np = tscore.numpy()
+#     dscore_np = dscore.numpy()
+#     res = discourse_inside(tscore, dscore, sbnds)
+#     idx = discourse_parse(tscore_np, dscore_np, sbnds)
+#     # print(res)

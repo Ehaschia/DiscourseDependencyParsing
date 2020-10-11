@@ -65,10 +65,10 @@ class OnlineEMTrainer(object):
         self.test_ds = test_ds
 
         self.train_iter = self.train_ds.get_dataloader(
-            same_len=self.cfg.getbool("same_len"), num_workers=self.cfg.getint("num_worker"),
-            min_len=self.cfg.getint("min_len_train"), max_len=self.cfg.getint("max_len_train"),
-            batch_size=self.cfg.getint("e_batch_size"), shuffle=self.cfg.getbool("shuffle"),
-            drop_last=self.cfg.getbool("drop_last"))
+            same_len=self.cfg.same_len, num_workers=self.cfg.num_worker,
+            min_len=self.cfg.min_len_train, max_len=self.cfg.max_len_train,
+            batch_size=self.cfg.e_batch_size, shuffle=self.cfg.shuffle,
+            drop_last=self.cfg.drop_last)
 
         make_sure_dir_exists(self.workspace)
         make_sure_dir_exists(self.workspace / 'best_uas')
@@ -82,20 +82,20 @@ class OnlineEMTrainer(object):
         :param stop_hook:
             (epoch_id, ll, best_ll, best_ll_epoch, uas, best_uas, best_uas_epoch) -> bool
         """
-        epoch = epoch or self.cfg.getint("epoch")
-        subepoch = subepoch or self.cfg.getint("epoch_nn")
+        epoch = epoch or self.cfg.epoch
+        subepoch = subepoch or self.cfg.epoch_nn
         best_ll, best_uas, uas = -1e30, -1., -1.
         best_ll_epoch, best_uas_epoch = -1, -1
 
         for epoch_id in range(epoch):
-            it = self.train_iter if self.cfg.getstr("device") == 'cpu' else prefetcher(self.train_iter)
+            it = self.train_iter if self.cfg.device == 'cpu' else prefetcher(self.train_iter)
             model_ll, nn_loss, n_instance, nn_total_epoch, n_batch = 0., 0., 0, 0, 0
 
             for one_batch in it:
-                tag_array = self.converter(one_batch.word_array, one_batch.pos_array)
+                tag_array = self.converter(one_batch.word_array, one_batch.kcluster_label_array)
                 arrays = namedtuple2dict(one_batch)
 
-                if self.cfg.getbool("end2end"):
+                if self.cfg.end2end:
                     self.nn.train()
                     tdr_param = self.nn.predict_pipeline(arrays, tag_array, mode='tdr')
                 else:
@@ -140,17 +140,18 @@ class OnlineEMTrainer(object):
                 n_instance += len(tag_array)
                 n_batch += 1
 
-            if epoch_id == 9:
-                self.nn.vib.vib_beta = 1e-8
-                print(self.nn.vib.vib_beta)
+            # if epoch_id == 9:
+            #     self.nn.vib.vib_beta = 1e-8
+            #     print(self.nn.vib.vib_beta)
 
             nn_loss = nn_loss / n_instance
             model_ll = model_ll / n_instance
-            utils.ex.logger.info(
-                f'epoch {epoch_id}, train.loss={nn_loss}, train.likelihood={model_ll}, '
-                f'{"using end2end" if self.cfg.end2end else f"run {nn_total_epoch / n_batch:.2f} epochs"}')
-            utils.ex.log_scalar('train.loss', nn_loss, epoch_id)
-            utils.ex.log_scalar('train.likelihood', model_ll, epoch_id)
+            # utils.ex.logger.info(
+            #     f'epoch {epoch_id}, train.loss={nn_loss}, train.likelihood={model_ll}, '
+            #     f'{"using end2end" if self.cfg.end2end else f"run {nn_total_epoch / n_batch:.2f} epochs"}')
+            # utils.ex.log_scalar('train.loss', nn_loss, epoch_id)
+            # utils.ex.log_scalar('train.likelihood', model_ll, epoch_id)
+            print(f'epoch {epoch_id}, train.loss={nn_loss}, train.likelihood={model_ll}, run {nn_total_epoch / n_batch:.2f} epochs')
 
             # torch.save(self.dmv.state_dict(), self.workspace / 'all' / f'dmv_{epoch_id}')
             # torch.save(self.nn.state_dict(), self.workspace / 'all' / f'nn_{epoch_id}')
@@ -164,11 +165,14 @@ class OnlineEMTrainer(object):
                 best_ll_epoch = epoch_id
 
             if report:
+                uas_train, ll_train = self.evaluate(self.train_ds)
                 uas_dev, ll_dev = self.evaluate(self.dev_ds)
                 uas_test, ll_test = self.evaluate(self.test_ds)
-                utils.ex.logger.info(f'epoch {epoch_id}, dev.uas={uas_dev}, test.uas={uas_test}')
-                utils.ex.log_scalar('dev.uas', uas_dev, epoch_id)
-                utils.ex.log_scalar('test.uas', uas_test, epoch_id)
+                # utils.ex.logger.info(f'epoch {epoch_id}, dev.uas={uas_dev}, test.uas={uas_test}')
+                # utils.ex.log_scalar('dev.uas', uas_dev, epoch_id)
+                # utils.ex.log_scalar('test.uas', uas_test, epoch_id)
+
+                print(f'epoch {epoch_id}, train.uas= {uas_train}, dev.uas={uas_dev}, test.uas={uas_test}')
                 # nni.report_intermediate_result(uas_test)
 
                 if uas_test > best_uas:
@@ -179,7 +183,7 @@ class OnlineEMTrainer(object):
                     best_uas_epoch = epoch_id
 
             if stop_hook and stop_hook(epoch_id, model_ll, best_ll, best_ll_epoch, uas, best_uas, best_uas_epoch):
-                utils.ex.logger.info('early stop triggered')
+                # utils.ex.logger.info('early stop triggered')
                 break
 
     def init_train(self, epoch: Optional[int] = None, report: bool = True, subepoch: Optional[int] = None) -> None:
@@ -200,7 +204,7 @@ class OnlineEMTrainer(object):
             it = self.train_iter if self.cfg.device == 'cpu' else prefetcher(self.train_iter)
             nn_loss, n_instance, nn_epoch_total, n_batch = 0., 0, 0, 0
             for one_batch in it:
-                tag_array = self.converter(one_batch.word_array, one_batch.pos_array)
+                tag_array = self.converter(one_batch.word_array, one_batch.kcluster_label_array)
                 # assert (tag_array < 40).all()
                 self.nn.eval()
                 with torch.no_grad():
@@ -256,7 +260,7 @@ class OnlineEMTrainer(object):
         _loader = prefetcher(_loader) if self.cfg.device != 'cpu' else _loader
         _batch = next(_loader)
         with torch.no_grad():
-            tag_array = self.converter(_batch[2], _batch[1])
+            # tag_array = self.converter(_batch[2], _batch[1])
             r, t, d = self.dmv.calcu_viterbi_count(heads, head_valences, valences, len_array)
             d = torch.sum(d, dim=2)
             t = self.nn.transition_param_helper_2(t)
@@ -270,18 +274,21 @@ class OnlineEMTrainer(object):
             it = loader if self.cfg.device == 'cpu' else prefetcher(loader)
             nn_loss, n_instance = 0., 0
             for one_batch in it:
-                tag_array = self.converter(one_batch.word_array, one_batch.pos_array)
+                tag_array = self.converter(one_batch.word_array, one_batch.kcluster_label_array)
                 arrays = namedtuple2dict(one_batch)
                 counts = {'r': r[one_batch.id_array], 't': t[one_batch.id_array], 'd': d[one_batch.id_array]}
                 loss, nn_epoch = self.non_end2end_neural_train(tag_array, arrays, counts, epoch=subepoch)  # noqa
                 nn_loss += loss
                 n_instance += len(one_batch.id_array)
             if report:
+                self.nn.eval()
+                uas_train, ll_train = self.evaluate(self.train_ds)
                 uas_dev, ll_dev = self.evaluate(self.dev_ds)
                 uas_test, ll_test = self.evaluate(self.test_ds)
-                utils.ex.logger.info(f'init epoch {epoch_id}, init.dev.uas={uas_dev}, init.test.uas={uas_test}')
-                utils.ex.log_scalar('init.dev.uas', uas_dev, epoch_id)
-                utils.ex.log_scalar('init.test.uas', uas_test, epoch_id)
+                # utils.ex.logger.info(f'init epoch {epoch_id}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
+                print(f'init epoch {epoch_id}, init.train.uas= {uas_train}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
+                # utils.ex.log_scalar('init.dev.uas', uas_dev, epoch_id)
+                # utils.ex.log_scalar('init.test.uas', uas_test, epoch_id)
 
     def non_end2end_neural_train(self, tag_array: Tensor, arrays: Dict[str, Tensor], counts: Dict[str, Tensor],
             mode: str = 'tdr', epoch: Optional[int] = None, batch_size: Optional[int] = None) -> Tuple[float, int]:
@@ -321,22 +328,23 @@ class OnlineEMTrainer(object):
         loader = dataset.get_dataloader(False, len(dataset), False, 0, 0, 1, self.cfg.max_len_eval)
         it = loader if self.cfg.device == 'cpu' else prefetcher(loader)
         for one_batch in it:
-            tag_array = self.converter(one_batch.word_array, one_batch.pos_array)
+            tag_array = self.converter(one_batch.word_array, one_batch.kcluster_label_array)
             arrays = namedtuple2dict(one_batch)
-            nn_t, nn_d, nn_r = self.nn.predict_pipeline(arrays, tag_array, mode='tdr')
-            t, d, r = self.dmv.build_scores(tag_array, 'tdr', using_fake=False)
-            if prefer_nn:
-                t, d, r = self.dmv.merge_scores((nn_t, nn_d, nn_r), (t, d, r))
-            else:
-                t, d, r = self.dmv.merge_scores((t, d, r), (nn_t, nn_d, nn_r))
-            d = self.dmv.build_final_dec_scores(d, using_fake=False)
-            t = self.dmv.build_final_trans_scores(t, r, using_fake=False)
+            with torch.no_grad():
+                nn_t, nn_d, nn_r = self.nn.predict_pipeline(arrays, tag_array, mode='tdr')
+                t, d, r = self.dmv.build_scores(tag_array, 'tdr', using_fake=False)
+                if prefer_nn:
+                    t, d, r = self.dmv.merge_scores((nn_t, nn_d, nn_r), (t, d, r))
+                else:
+                    t, d, r = self.dmv.merge_scores((t, d, r), (nn_t, nn_d, nn_r))
+                d = self.dmv.build_final_dec_scores(d, using_fake=False)
+                t = self.dmv.build_final_trans_scores(t, r, using_fake=False)
 
-            out, ll = self.dmv.parse(t, d, one_batch.len_array)
-            pred.extend(out)
-            ll_sum += ll
+                out, ll = self.dmv.parse(t, d, one_batch.len_array, one_batch.sent_map_array)
+                pred.extend(out)
+                ll_sum += ll
 
-        gold = [d.parent_id for d in dataset]
+        gold = [[arc[0] for arc in d.arcs] for d in dataset if len(d) <= self.cfg.max_len_eval]
         uas, root_uas = calculate_uas(pred, gold)
 
         return uas, ll_sum / len(dataset)

@@ -65,12 +65,14 @@ class DiscriminativeNeuralDMV(nn.Module):
             assert self.word_emb.weight.shape[1] == self.cfg.dim_word_emb
         else:
             self.word_emb = nn.Embedding(self.cfg.num_lex + 2, self.cfg.dim_word_emb)
-
+        self.emb_to_lstm = nn.Linear(self.cfg.dim_word_emb, self.cfg.lstm_dim_in)
+        # chage dim same as word_emb due to the kcluster
         if 'pos' in emb:
             self.pos_emb = nn.Embedding.from_pretrained(emb['pos'], freeze=self.cfg.freeze_pos_emb)
             assert self.pos_emb.weight.shape[1] == self.cfg.dim_pos_emb
         else:
-            self.pos_emb = nn.Embedding(self.cfg.num_pos, self.cfg.dim_pos_emb)
+            self.pos_emb = nn.Embedding(self.cfg.kcluster, self.cfg.dim_word_emb)
+        self.emb_to_pos = nn.Linear(self.cfg.dim_word_emb, self.cfg.dim_pos_emb)
 
         if self.cfg.share_valence_emb and self.cfg.cv == 2:
             self.cv_emb = nn.Embedding(2, self.cfg.dim_valence_emb)
@@ -81,8 +83,8 @@ class DiscriminativeNeuralDMV(nn.Module):
 
         self.deprel_emb = nn.Embedding(self.cfg.num_deprel, self.cfg.dim_deprel_emb)
         self.relation_emb = nn.Embedding(self.cfg.num_relation, self.cfg.dim_relation_emb)
-        self.emb_to_lstm = nn.Linear(self.cfg.dim_word_emb*3+self.cfg.dim_deprel_emb+self.cfg.dim_pos_emb*3,
-                                     self.cfg.lstm_dim_in)
+        # self.emb_to_lstm = nn.Linear(self.cfg.dim_word_emb*3+self.cfg.dim_deprel_emb+self.cfg.dim_pos_emb*3,
+        #                              self.cfg.lstm_dim_in)
 
         # shared layer
         self.lstm_s = LSTMBlock(self.cfg.lstm_dim_in, self.cfg.lstm_dim_out, self.cfg.lstm_bidirectional,
@@ -122,11 +124,14 @@ class DiscriminativeNeuralDMV(nn.Module):
             #         nn.init.normal_(self.pos_emb_out.data)
             # else:
             self.child_linear = nn.Linear(self.cfg.dim_hidden, self.cfg.dim_pre_out_child)
-            self.child_out_linear = nn.Linear(self.cfg.dim_pre_out_child, self.cfg.num_tag)
-            self.child_word_linear = nn.Linear(self.cfg.dim_word_emb, self.cfg.dim_pre_out_child)
+            self.child_out_linear = nn.Linear(self.cfg.dim_pre_out_child, self.cfg.kcluster)
+            # self.child_word_linear = nn.Linear(self.cfg.dim_word_emb, self.cfg.dim_pre_out_child)
 
         self.activate = ACTIVATION_DICT[self.cfg.activation_func]
         self.dropout = nn.Dropout(self.cfg.dropout)
+
+        # TODO just for debug
+        self.cs_embedding = None
 
         # self.word_idx, self.pos_idx = None, None
 
@@ -153,27 +158,22 @@ class DiscriminativeNeuralDMV(nn.Module):
     def optimize(self) -> None:
         self.optimizer.step()
 
-    def forward(self, arrays: Dict[str, Tensor], tag_array: Tensor, mode: str = 'tdr') -> List[Tensor]:
-        len_array = arrays['len']
-        max_len = arrays['head_word'].shape[1]  # in sub_batch, max(len_array) != max_len
-        batch_size = len(len_array)
+    # a list of edu represent method
+    def edu_feature_v1(self, arrays):
 
-        # get idx
-        head_deprel_emb = self.deprel_emb(arrays["head_deprel"])
         first_word_emb = self.word_emb(arrays["first_word"])
         end_word_emb = self.word_emb(arrays["end_word"])
         head_word_emb = self.word_emb(arrays["head_word"])
         first_pos_emb = self.pos_emb(arrays["first_pos"])
         end_pos_emb = self.pos_emb(arrays["end_pos"])
         head_pos_emb = self.pos_emb(arrays["head_pos"])
-        # head_deprel_emb = self.deprel_emb(arrays["head_deprel"])
+        head_deprel_emb = self.deprel_emb(arrays["head_deprel"])
 
-        self.edus_len = arrays["edus_len"]
+        # self.edus_len = arrays["edus_len"]
         # print(torch.sum(~torch.eq(arrays["edus"][:, :, torch.max(self.edus_len):], 7618)))
         # print(torch.sum(~torch.eq(arrays["edus"][:, :, torch.max(self.edus_len):], 7618)))
-        self.edus = arrays["edus"][:, :, :torch.max(self.edus_len)]
-        self.sent_map = arrays["sent_map"]
-        # word_emb = self.word_emb(arrays['word'])
+        # self.edus = arrays["edus"][:, :, :torch.max(self.edus_len)]
+        # self.sent_map = arrays["sent_map"]
 
         edu_vectors = torch.cat([first_word_emb,
                                  end_word_emb,
@@ -182,9 +182,33 @@ class DiscriminativeNeuralDMV(nn.Module):
                                  end_pos_emb,
                                  head_pos_emb,
                                  head_deprel_emb], dim=2)
-        edu_vectors = self.activate(self.dropout(self.emb_to_lstm(edu_vectors)))
-        _, sent_emb = self.lstm_s(edu_vectors, len_array)
-        embs = [head_pos_emb, sent_emb]
+        return edu_vectors
+
+    def bag_of_word(self):
+        batch_size, max_len, word_len = self.edus.size()
+        words = self.word_emb(self.edus.reshape(-1)).reshape(batch_size, max_len, word_len, self.cfg.dim_word_emb)
+        edus_mask = make_mask(self.edus_len.view(-1)).view(batch_size, max_len, word_len, -1)
+        bag_word = torch.sum(words * edus_mask, dim=2) / (self.edus_len + (self.edus_len == 0).long()).unsqueeze(-1)
+
+        # edu_vectors = self.activate(self.dropout(self.emb_to_lstm(bag_word)))
+        return bag_word
+
+    def context_embedding(self, arrays):
+        return arrays["context_embed"]
+
+    def forward(self, arrays: Dict[str, Tensor], tag_array: Tensor, mode: str = 'tdr') -> List[Tensor]:
+        len_array = arrays['len']
+        max_len = arrays['head_word'].shape[1]  # in sub_batch, max(len_array) != max_len
+        batch_size = len(len_array)
+        self.edus_len = arrays["edus_len"]
+        self.edus = arrays["edus"][:, :, :torch.max(self.edus_len)]
+        self.sent_map = arrays["sent_map"]
+
+        edu_vectors = self.context_embedding(arrays)
+        lstm_in = self.activate(self.dropout(self.emb_to_lstm(edu_vectors)))
+        self.cs_embedding = edu_vectors
+        _, sent_emb = self.lstm_s(lstm_in, len_array)
+        embs = [self.dropout(self.emb_to_pos(edu_vectors)), sent_emb]
 
         params = {}
         if 'd' in mode and 'd' in self.mode:
@@ -194,7 +218,8 @@ class DiscriminativeNeuralDMV(nn.Module):
         if 't' in mode and 't' in self.mode:
             v_embs, d, v = self.prepare_transition(embs, None, batch_size, max_len, 'edv')
             h = self.real_forward(v_embs, d, v, 'transition')
-            params['t'] = h # self.transition_param_helper(tag_array, h)
+            params['t'] = self.transition_param_helper(tag_array, h)
+            # params['t'] = h # self.transition_param_helper(tag_array, h)
             del v_embs, d, v
         if 'r' in mode and 'r' in self.mode:
             r_embs, d, v = self.prepare_root(embs, None, batch_size, max_len, 'edv')
@@ -239,10 +264,7 @@ class DiscriminativeNeuralDMV(nn.Module):
         left_right_h = self.activate(self.left_right_linear(h))
         left_h = left_right_h[:, :self.cfg.dim_hidden]
         right_h = left_right_h[:, self.cfg.dim_hidden:]
-        # # debug
-        # direction_np = direction.cpu().detach().numpy()
-        # left_h_np = left_h.cpu().detach().numpy()
-        # left_h_np[direction_np == 1, :] = 0.
+
         left_h[direction == 1, :] = 0.
         right_h[direction == 0, :] = 0.
         h = left_h + right_h
@@ -260,27 +282,26 @@ class DiscriminativeNeuralDMV(nn.Module):
             # w = w.T
             # h = torch.mm(self.activate(self.child_linear(h)), w)
             # else:
-            # h = self.child_out_linear(self.activate(self.child_linear(h)))
+            h = self.child_out_linear(self.activate(self.child_linear(h)))
             #
-            # here we use bag of word
-            batch_size, max_len, word_len = self.edus.size()
 
-            words = self.word_emb(self.edus.reshape(-1)).reshape(batch_size, max_len, word_len, self.cfg.dim_word_emb)
-            edus_mask = make_mask(self.edus_len.view(-1)).view(batch_size, max_len, word_len, -1)
-            bag_word = torch.sum(words * edus_mask, dim=2) / (self.edus_len + (self.edus_len == 0).long() ).unsqueeze(-1)
-            # avoid nan error
-            bag_word = self.child_word_linear(bag_word).reshape(batch_size, max_len, 1, 1, -1).\
-                expand(batch_size, max_len, 2, self.cfg.cv, -1)
-
-            h = torch.bmm(self.activate(self.child_linear(h)).reshape_as(bag_word).permute(0, 2, 3, 1, 4).
-                          reshape(-1, max_len, self.cfg.dim_pre_out_child),
-                          bag_word.permute(0, 2, 3, 4, 1).reshape(-1, self.cfg.dim_pre_out_child, max_len,)).\
-                reshape(batch_size, 2, self.cfg.cv, max_len, max_len)
-            length_mask = (self.edus_len == 0).long() * (torch.min(h)-1e5)
-            h = h + (2*torch.max(h)*self.sent_map).view(batch_size, 1, 1, max_len, max_len)
-            prob_h = torch.log_softmax((h + length_mask.view(batch_size, 1, 1, max_len, 1) +
-                                        length_mask.view(batch_size, 1, 1, 1, max_len)), dim=-1)
-            return prob_h.permute(0, 3, 4, 1, 2)
+            # batch_size, max_len, _ = self.cs_embedding.size()
+            #
+            # # edu repesentation
+            # edu_represtation = self.child_word_linear(self.cs_embedding).reshape(batch_size, max_len, 1, 1, -1).\
+            #     expand(batch_size, max_len, 2, self.cfg.cv, -1)
+            # h = torch.matmul(self.activate(self.child_linear(h)).reshape_as(edu_represtation).permute(0, 2, 3, 1, 4).
+            #               reshape(-1, max_len, self.cfg.dim_pre_out_child),
+            #               edu_represtation.permute(0, 2, 3, 4, 1).reshape(-1, self.cfg.dim_pre_out_child, max_len,)).\
+            #     reshape(batch_size, 2, self.cfg.cv, max_len, max_len)
+            # # h = torch.matmul(self.activate(self.child_linear(h)).reshape_as(edu_represtation).permute(0, 2, 1),
+            # #                  edu_represtation)
+            # length_mask = (self.edus_len == 0).long() * (torch.min(h)-1e20)
+            # h = h + self.sent_map.view(batch_size, 1, 1, max_len, max_len)
+            # # h = h + (2*torch.max(torch.abs(h))*self.sent_map).view(batch_size, 1, 1, max_len, max_len)
+            # prob_h = torch.log_softmax((h + length_mask.view(batch_size, 1, 1, max_len, 1) +
+            #                             length_mask.view(batch_size, 1, 1, 1, max_len)), dim=-1)
+            # return prob_h.permute(0, 3, 4, 1, 2)
 
         elif mode == 'root':
             h = self.root_out_linear(self.activate(self.root_linear(h)))
@@ -382,7 +403,7 @@ class DiscriminativeNeuralDMV(nn.Module):
     def transition_param_helper(self, tag_array, forward_output):
         """convert (batch, seq_len, 2, self.cfg.cv, seq_len) to (batch, seq_len, seq_len, [direction,] self.cfg.cv)"""
         batch_size, max_len = tag_array.shape
-        forward_output = forward_output.view(batch_size, max_len, 2, self.cfg.cv, max_len)
+        forward_output = forward_output.view(batch_size, max_len, 2, self.cfg.cv, self.cfg.kcluster)
         index = tag_array.view(batch_size, 1, 1, 1, max_len).expand(-1, max_len, 2, self.cfg.cv, -1)
         param = torch.gather(forward_output, 4, index).permute(0, 1, 4, 2, 3).contiguous()
         return param
@@ -396,10 +417,3 @@ class DiscriminativeNeuralDMV(nn.Module):
             index[:, i, :i] = 0
         param = torch.gather(param, 3, index).squeeze(3)
         return param
-
-    # def set_lex(self, word_idx: Tensor, pos_idx: Optional[Tensor] = None):
-    #     # the order MUST match the converter
-    #     # (word_idx[0], pos_idx[0])=num_pos ...
-    #     self.word_idx = nn.Parameter(word_idx, requires_grad=False)
-    #     if pos_idx is not None:
-    #         self.pos_idx = nn.Parameter(pos_idx, requires_grad=False)
