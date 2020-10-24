@@ -66,7 +66,8 @@ class DiscriminativeNeuralDMV(nn.Module):
         else:
             self.word_emb = nn.Embedding(self.cfg.num_lex + 2, self.cfg.dim_word_emb)
         self.emb_to_lstm = nn.Linear(self.cfg.dim_word_emb, self.cfg.lstm_dim_in)
-        # chage dim same as word_emb due to the kcluster
+        self.emb_to_cat = nn.Linear(self.cfg.dim_word_emb, self.cfg.dim_pos_emb)
+        # chage dim same as word_emb due to the cluster
         if 'pos' in emb:
             if self.cfg.pca:
                 u, s, v = torch.pca_lowrank(torch.tensor(emb['pos']), self.cfg.dim_pos_emb)
@@ -75,7 +76,7 @@ class DiscriminativeNeuralDMV(nn.Module):
             self.pos_emb = nn.Embedding.from_pretrained(u, freeze=self.cfg.freeze_pos_emb)
             # assert self.pos_emb.weight.shape[1] == self.cfg.dim_pos_emb
         else:
-            self.pos_emb = nn.Embedding(self.cfg.kcluster, self.cfg.dim_word_emb)
+            self.pos_emb = nn.Embedding(self.cfg.cluster, self.cfg.dim_pos_emb)
         self.emb_to_pos = nn.Linear(self.cfg.dim_word_emb, self.cfg.dim_pos_emb)
 
         if self.cfg.share_valence_emb and self.cfg.cv == 2:
@@ -95,7 +96,7 @@ class DiscriminativeNeuralDMV(nn.Module):
                                 self.cfg.lstm_layers, self.cfg.lstm_dropout)
 
         # self.emb_dim = self.cfg.dim_word_emb + self.cfg.dim_pos_emb + self.cfg.dim_valence_emb
-        self.emb_dim = self.cfg.dim_pos_emb + self.cfg.dim_valence_emb + self.cfg.lstm_dim_out
+        self.emb_dim = self.cfg.dim_pos_emb*2 + self.cfg.dim_valence_emb + self.cfg.lstm_dim_out
 
         self.edus, self.edus_len = None, None
         self.sent_map = None
@@ -127,7 +128,7 @@ class DiscriminativeNeuralDMV(nn.Module):
             #         nn.init.normal_(self.pos_emb_out.data)
             # else:
             self.child_linear = nn.Linear(self.cfg.dim_hidden, self.cfg.dim_pre_out_child)
-            self.child_out_linear = nn.Linear(self.cfg.dim_pre_out_child, self.cfg.kcluster)
+            self.child_out_linear = nn.Linear(self.cfg.dim_pre_out_child, self.cfg.cluster)
             # self.child_word_linear = nn.Linear(self.cfg.dim_word_emb, self.cfg.dim_pre_out_child)
 
         self.activate = ACTIVATION_DICT[self.cfg.activation_func]
@@ -210,7 +211,8 @@ class DiscriminativeNeuralDMV(nn.Module):
         pos_embeds = self.pos_emb(tag_array)
         if not self.cfg.pca:
             pos_embeds = self.emb_to_pos(pos_embeds)
-        embs = [self.dropout(pos_embeds), sent_emb]
+        # here we try to concat the two embedding
+        embs = [self.dropout(pos_embeds), self.dropout(self.emb_to_cat(edu_vectors)), sent_emb]
 
         params = {}
         if 'd' in mode and 'd' in self.mode:
@@ -403,7 +405,7 @@ class DiscriminativeNeuralDMV(nn.Module):
     def transition_param_helper(self, tag_array, forward_output):
         """convert (batch, seq_len, 2, self.cfg.cv, seq_len) to (batch, seq_len, seq_len, [direction,] self.cfg.cv)"""
         batch_size, max_len = tag_array.shape
-        forward_output = forward_output.view(batch_size, max_len, 2, self.cfg.cv, self.cfg.kcluster)
+        forward_output = forward_output.view(batch_size, max_len, 2, self.cfg.cv, self.cfg.cluster)
         index = tag_array.view(batch_size, 1, 1, 1, max_len).expand(-1, max_len, 2, self.cfg.cv, -1)
         param = torch.gather(forward_output, 4, index).permute(0, 1, 4, 2, 3).contiguous()
         return param

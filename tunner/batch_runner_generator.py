@@ -12,23 +12,38 @@ from os.path import isfile, join
 bash_prefix = '#!/usr/bin/env bash\n'
 python = '/home/zhanglw/bin/anaconda3/envs/dci/bin/python'
 cuda = 'CUDA_VISIBLE_DEVICES'
-dir_path = './dndmv_config/'
+dir_path = './dndmv_configs/'
 program = 'dndmv_main.py'
 class BaseGenerator:
     def generate(self, load_path, batch):
         onlyfiles = [f for f in listdir(load_path) if isfile(join(load_path, f))]
         onlyfiles = sorted(onlyfiles)
-        with open(load_path + '/batch_runner.sh', 'w') as f:
-            f.write(bash_prefix)
-            for idx, file_name in enumerate(onlyfiles):
-                run_prefix = cuda + '=' + str(idx%4) + ' ' + python + ' ' + program
-                if (idx+1) % batch == 0:
-                    f.write(run_prefix +' --config ' + dir_path + file_name + '\n')
-                    f.write('sleep 120\n')
-                else:
-                    f.write(run_prefix + ' --config ' + dir_path + file_name + '&\n')
-                    f.write('sleep 5\n')
+
+        b = [load_path + '/batch_runner0.sh', load_path + '/batch_runner1.sh',
+             load_path + '/batch_runner2.sh', load_path + '/batch_runner3.sh']
+        clis = [[], [], [], []]
+
+        for idx, file_name in enumerate(onlyfiles):
+            cuda_idx = idx % 4
+            run_prefix = cuda + '=' + str(cuda_idx) + ' ' + python + ' ' + program
+            clis[cuda_idx].append(run_prefix + ' --config ' + dir_path + file_name + '\n')
+
+        for f_name, cli in zip(b, clis):
+            with open(f_name, 'w') as f:
+                s = ''.join(cli)
+                f.write(s)
+
+        # with open(load_path + '/batch_runner.sh', 'w') as f:
+        #     f.write(bash_prefix)
+        #     for idx, file_name in enumerate(onlyfiles):
+        #         run_prefix = cuda + '=' + str(idx%4) + ' ' + python + ' ' + program
+        #         if (idx+1) % batch == 0:
+        #             f.write(run_prefix +' --config ' + dir_path + file_name + '\n')
+        #             f.write('sleep 120\n')
+        #         else:
+        #             f.write(run_prefix + ' --config ' + dir_path + file_name + '&\n')
+        #             f.write('sleep 5\n')
 
 if __name__ == '__main__':
     generator = BaseGenerator()
-    generator.generate(ROOT_DIR + '/dndmv_configs', 8)
+    generator.generate(ROOT_DIR + '/dndmv_configs', 4)

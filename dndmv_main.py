@@ -51,9 +51,9 @@ def dndmv_main(args):
     # dmv and dndmv
     dmv = DMV(cfg, cfg["dmv_mode"]).cuda()
     dmv.train()
-    # pos embed
-    pos_embed = kmeans.cluster_centers_
-    nn = DiscriminativeNeuralDMV(cfg, {'pos': torch.from_numpy(pos_embed)}, cfg["nn_mode"]).cuda()
+    # pos embed (current ignore)
+    # pos_embed = kmeans.cluster_centers_
+    nn = DiscriminativeNeuralDMV(cfg, {}, cfg["nn_mode"]).cuda()
     # nn = DiscriminativeNeuralDMV(dict_cfg, {"word": torch.from_numpy(initialW)}, cfg.getstr("nn_mode")).cuda()
     nn.optimizer = torch.optim.Adam(nn.parameters(), cfg["lr"])
 
@@ -68,7 +68,7 @@ def dndmv_main(args):
 
     # trainer.init_train(cfg.getint("epoch_init"))
     trainer.init_train_v2(train_dataset, cfg["epoch_init"], True)
-    trainer.train(cfg["epoch"], stop_hook=trainer.default_stop_hook)
+    trainer.train(cfg["epoch"], stop_hook=trainer.uas_stop_hook)
 
     # evaluate
     dmv.load_state_dict(torch.load(trainer.workspace / 'best_ll' / 'dmv'))
@@ -119,16 +119,27 @@ def load_scidtb(cfg: Dict):
                                         vocab_relation=vocab_relation, encoder=cfg["encoder"])
     dev_dataset = ScidtbDatasetWithEmb(dev, vocab_word=vocab_word, vocab_postag=vocab_postag, vocab_deprel=vocab_deprel,
                                        vocab_relation=vocab_relation, encoder=cfg["encoder"])
-    utils.writelog("Build Kmeans cluster")
+    # utils.writelog("Build Kmeans cluster")
     std = train_dataset.norm_embed(None)
     dev_dataset.norm_embed(std)
     test_dataset.norm_embed(std)
-    kmeans = train_dataset.kmeans(cfg["kcluster"], 42)
-    train_dataset.kmeans_label(kmeans)
-    dev_dataset.kmeans_label(kmeans)
-    test_dataset.kmeans_label(kmeans)
+
+    # kcluster labels
+    # kmeans = train_dataset.kmeans(cfg["kcluster"], 42)
+    # train_dataset.kmeans_label(kmeans)
+    # dev_dataset.kmeans_label(kmeans)
+    # test_dataset.kmeans_label(kmeans)
+
+    # load markov label
+    kmeans = None
+    tag2ids = utils.load_markov_label('data/appendix/tags/', cfg['markov_label'], train_dataset, None)
+    utils.load_markov_label('data/appendix/tags/', cfg['markov_label'], dev_dataset, tag2ids)
+    utils.load_markov_label('data/appendix/tags/', cfg['markov_label'], test_dataset, tag2ids)
     end_time = time.time()
     utils.writelog("Loaded the corpus. %f [sec.]" % (end_time - begin_time))
+
+    utils.writelog("Update markov label number: {}".format(len(tag2ids)))
+    cfg['cluster'] = len(tag2ids)
 
     cfg["num_tag"] = len(vocab_postag)
     cfg["num_pos"] = len(vocab_postag)
@@ -137,6 +148,11 @@ def load_scidtb(cfg: Dict):
     cfg["num_relation"] = len(vocab_relation)
 
     # cfg cluster
+
+    # clean
+    train_dataset.clean_encoder()
+    dev_dataset.clean_encoder()
+    test_dataset.clean_encoder()
 
     return train_dataset, dev_dataset, test_dataset, kmeans
 

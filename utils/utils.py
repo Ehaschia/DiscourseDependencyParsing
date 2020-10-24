@@ -48,7 +48,7 @@ def set_logger(filename):
         if (not do_remove.lower().startswith("y")) and (not len(do_remove) == 0):
             print("Done.")
             sys.exit(0)
-    logging.basicConfig(level=DEBUG, format="%(message)s", filename=filename, filemode="w")
+    logging.basicConfig(level=INFO, format="%(message)s", filename=filename, filemode="w")
 
 ############################
 # Configulation
@@ -1675,3 +1675,23 @@ def make_mask(seq_length, max_len=None):
     seq_length = seq_length.unsqueeze(1)
     return seq_range < seq_length
 
+# default load epoch 50 labels
+def load_markov_label(path, name, dataset, tag2id):
+    tag_dict = tag2id if tag2id is not None else {}
+    config_name = '.' + name + '.50.tags'
+    for discourse in dataset:
+        inst_name = discourse.name.split('.')[0]
+        with open(path + '/' + inst_name + config_name, 'r') as f:
+            for line in f.readlines():
+                line = line.strip()
+                cur_epoch = int(line.split('\t')[0].split(' ')[1])
+                if cur_epoch == 50:
+                    tags = line.split('\t')[1].split(' ')
+                    int_tags = []
+                    for tag in tags:
+                        if tag not in tag_dict:
+                            tag_dict[tag] = len(tag_dict)
+                        int_tags.append(tag_dict[tag])
+                    break
+        setattr(discourse, 'cluster_label', int_tags)
+    return tag_dict

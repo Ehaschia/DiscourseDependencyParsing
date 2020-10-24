@@ -9,7 +9,7 @@ from typing import List, Tuple
 # context sensitive data loader
 from utils import DataInstance
 import torch.nn as nn
-
+import gc
 
 class CSEncoder(nn.Module):
 
@@ -157,3 +157,7 @@ class CSEncoder(nn.Module):
         res = self.model(**inputs)
 
         return res[0]
+
+    def clean(self):
+        del self.model
+        gc.collect()

@@ -86,7 +86,7 @@ class OnlineEMTrainer(object):
         """
         epoch = epoch or self.cfg.epoch
         subepoch = subepoch or self.cfg.epoch_nn
-        best_ll, best_uas, uas = -1e30, -1., -1.
+        best_ll, best_uas = -1e30, -1.
         best_ll_epoch, best_uas_epoch = -1, -1
 
         for epoch_id in range(epoch):
@@ -94,7 +94,7 @@ class OnlineEMTrainer(object):
             model_ll, nn_loss, n_instance, nn_total_epoch, n_batch = 0., 0., 0, 0, 0
 
             for one_batch in it:
-                tag_array = self.converter(one_batch.word_array, one_batch.kcluster_label_array)
+                tag_array = self.converter(one_batch.word_array, one_batch.cluster_label_array)
                 arrays = namedtuple2dict(one_batch)
 
                 if self.cfg.end2end:
@@ -184,8 +184,9 @@ class OnlineEMTrainer(object):
                     best_uas = uas_test
                     best_uas_epoch = epoch_id
 
-            if stop_hook and stop_hook(epoch_id, model_ll, best_ll, best_ll_epoch, uas, best_uas, best_uas_epoch):
+            if stop_hook and stop_hook(epoch_id, model_ll, best_ll, best_ll_epoch, uas_test, best_uas, best_uas_epoch):
                 # utils.ex.logger.info('early stop triggered')
+                utils.writelog('early stop triggered')
                 break
 
     def init_train(self, epoch: Optional[int] = None, report: bool = True, subepoch: Optional[int] = None) -> None:
@@ -206,7 +207,7 @@ class OnlineEMTrainer(object):
             it = self.train_iter if self.cfg.device == 'cpu' else prefetcher(self.train_iter)
             nn_loss, n_instance, nn_epoch_total, n_batch = 0., 0, 0, 0
             for one_batch in it:
-                tag_array = self.converter(one_batch.word_array, one_batch.kcluster_label_array)
+                tag_array = self.converter(one_batch.word_array, one_batch.cluster_label_array)
                 # assert (tag_array < 40).all()
                 self.nn.eval()
                 with torch.no_grad():
@@ -276,7 +277,7 @@ class OnlineEMTrainer(object):
             it = loader if self.cfg.device == 'cpu' else prefetcher(loader)
             nn_loss, n_instance = 0., 0
             for one_batch in it:
-                tag_array = self.converter(one_batch.word_array, one_batch.kcluster_label_array)
+                tag_array = self.converter(one_batch.word_array, one_batch.cluster_label_array)
                 arrays = namedtuple2dict(one_batch)
                 counts = {'r': r[one_batch.id_array], 't': t[one_batch.id_array], 'd': d[one_batch.id_array]}
                 loss, nn_epoch = self.non_end2end_neural_train(tag_array, arrays, counts, epoch=subepoch)  # noqa
@@ -289,6 +290,10 @@ class OnlineEMTrainer(object):
                 uas_test, ll_test = self.evaluate(self.test_ds)
                 # utils.ex.logger.info(f'init epoch {epoch_id}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
                 utils.logger.info(f'init epoch {epoch_id}, init.train.uas= {uas_train}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
+
+                # TODO ugly adapt
+                if uas_test > 0.527:
+                    break
                 # utils.ex.log_scalar('init.dev.uas', uas_dev, epoch_id)
                 # utils.ex.log_scalar('init.test.uas', uas_test, epoch_id)
 
@@ -330,7 +335,7 @@ class OnlineEMTrainer(object):
         loader = dataset.get_dataloader(False, len(dataset), False, 0, 0, 1, self.cfg.max_len_eval)
         it = loader if self.cfg.device == 'cpu' else prefetcher(loader)
         for one_batch in it:
-            tag_array = self.converter(one_batch.word_array, one_batch.kcluster_label_array)
+            tag_array = self.converter(one_batch.word_array, one_batch.cluster_label_array)
             arrays = namedtuple2dict(one_batch)
             with torch.no_grad():
                 nn_t, nn_d, nn_r = self.nn.predict_pipeline(arrays, tag_array, mode='tdr')
@@ -356,3 +361,7 @@ class OnlineEMTrainer(object):
             best_uas: float, best_uas_epoch: int) -> bool:
         return epoch_id > best_ll_epoch + 10
 
+    @staticmethod
+    def uas_stop_hook(epoch_id: int, ll: float, best_ll: float, best_ll_epoch: int, uas: float,
+            best_uas: float, best_uas_epoch: int) -> bool:
+        return uas < 0.48

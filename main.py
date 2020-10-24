@@ -67,13 +67,7 @@ def main(args):
 
     ##################
     # Random seed
-    random_seed = trial_name
-    random_seed = utils.hash_string(random_seed)
-    np.random.seed(random_seed)
-    torch.manual_seed(random_seed)
-    torch.cuda.manual_seed(random_seed)
-    torch.cuda.manual_seed_all(random_seed)
-    # cuda.cupy.random.seed(random_seed)
+    utils.set_seed(trial_name)
 
     ##################
     # Log so far
@@ -91,8 +85,6 @@ def main(args):
     utils.writelog("path_snapshot=%s" % path_snapshot)
     utils.writelog("path_pred=%s" % path_pred)
     utils.writelog("path_eval=%s" % path_eval)
-
-    utils.writelog("random_seed=%d" % random_seed)
 
     ##################
     # Data preparation

@@ -630,7 +630,7 @@ class ScidtbInstance:
         self._sent_map_np = None
 
         # kmeans parameter
-        self.kcluster_label = None
+        self.cluster_label = None
 
     def __len__(self):
         return len(self.entry.arcs)
@@ -930,7 +930,7 @@ ScidtbDatasetWithEmbBatchData = namedtuple("ScidtbDatasetWithEmbBatchData", ('id
                                                                'first_word_array', 'end_word_array', 'head_word_array',
                                                                'first_pos_array', 'end_pos_array', 'head_pos_array',
                                                                'head_deprel_array', 'edus_array', 'edus_len_array',
-                                                               'sent_map_array', 'context_embed_array', 'kcluster_label_array'))
+                                                               'sent_map_array', 'context_embed_array', 'cluster_label_array'))
 
 
 class ScidtbInstanceWithEmb(ScidtbInstance):
@@ -994,7 +994,10 @@ class ScidtbDatasetWithEmb(ScidtbDataset):
     def kmeans_label(self, kmeans: KMeans):
         for instance in self.instances:
             labels = kmeans.predict(instance.build_context_embed_np())
-            instance.kcluster_label = labels
+            instance.cluster_label = labels
+
+    def clean_encoder(self):
+        self.cs_encoder.clean()
 
     @staticmethod
     def collect_fn(batch_raw_data: List[ScidtbInstanceWithEmb]):
@@ -1096,12 +1099,12 @@ class ScidtbDatasetWithEmb(ScidtbDataset):
             pad = 0.0
             context_embed_array = pad_sequence(list(map(torch.tensor, context_embed_np)), batch_first=True, padding_value=pad)
 
-        kcluster_label_np = [ins.kcluster_label for ins in batch_raw_data]
-        if kcluster_label_np[0] is None:
-            kcluster_label_array = None
+        cluster_label_np = [ins.cluster_label for ins in batch_raw_data]
+        if cluster_label_np[0] is None:
+            cluster_label_array = None
         else:
             pad = 0
-            kcluster_label_array = pad_sequence(list(map(torch.tensor, kcluster_label_np)), True, pad).long()
+            cluster_label_array = pad_sequence(list(map(torch.tensor, cluster_label_np)), True, pad).long()
         return ScidtbDatasetWithEmbBatchData(id_array=id_array, pos_array=None, word_array=None, len_array=len_array,
                                              first_word_array=first_word_array, end_word_array=end_word_array,
                                              head_word_array=head_word_array, first_pos_array=first_pos_array,
@@ -1109,6 +1112,6 @@ class ScidtbDatasetWithEmb(ScidtbDataset):
                                              head_deprel_array=head_deprel_array, edus_len_array=edus_len_array,
                                              edus_array=edus_array, sent_map_array=sent_map_array,
                                              context_embed_array=context_embed_array,
-                                             kcluster_label_array=kcluster_label_array)
+                                             cluster_label_array=cluster_label_array)
 
 
