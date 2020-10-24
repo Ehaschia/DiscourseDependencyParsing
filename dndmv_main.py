@@ -58,7 +58,7 @@ def dndmv_main(args):
     nn.optimizer = torch.optim.Adam(nn.parameters(), cfg["lr"])
 
     # build trainer
-    trainer = OnlineEMTrainer(cfg, dmv, nn, converter, train_dataset, dev_dataset, test_dataset)
+    trainer = OnlineEMTrainer(cfg, dmv, nn, converter, train_dataset, test_dataset, dev_dataset)
 
     # train
     uas_dmv, ll_dmv = trainer.evaluate(test_dataset, prefer_nn=False)
