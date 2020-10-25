@@ -209,8 +209,8 @@ class DiscriminativeNeuralDMV(nn.Module):
         lstm_in = self.activate(self.dropout(self.emb_to_lstm(edu_vectors)))
         _, sent_emb = self.lstm_s(lstm_in, len_array)
         pos_embeds = self.pos_emb(tag_array)
-        if not self.cfg.pca:
-            pos_embeds = self.emb_to_pos(pos_embeds)
+        # if not self.cfg.pca:
+        #     pos_embeds = self.emb_to_pos(pos_embeds)
         # here we try to concat the two embedding
         embs = [self.dropout(pos_embeds), self.dropout(self.emb_to_cat(edu_vectors)), sent_emb]
 
