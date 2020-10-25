@@ -19,12 +19,11 @@ class BaseGenerator:
         onlyfiles = [f for f in listdir(load_path) if isfile(join(load_path, f))]
         onlyfiles = sorted(onlyfiles)
 
-        b = [load_path + '/batch_runner0.sh', load_path + '/batch_runner1.sh',
-             load_path + '/batch_runner2.sh', load_path + '/batch_runner3.sh']
-        clis = [[], [], [], []]
+        b = [load_path + '/batch_runner' + str(i) + '.sh' for i in range(batch)]
+        clis = [[]*batch]
 
         for idx, file_name in enumerate(onlyfiles):
-            cuda_idx = idx % 4
+            cuda_idx = idx % batch + 1
             run_prefix = cuda + '=' + str(cuda_idx) + ' ' + python + ' ' + program
             clis[cuda_idx].append(run_prefix + ' --config ' + dir_path + file_name + '\n')
 
@@ -46,4 +45,4 @@ class BaseGenerator:
 
 if __name__ == '__main__':
     generator = BaseGenerator()
-    generator.generate(ROOT_DIR + '/dndmv_configs', 4)
+    generator.generate(ROOT_DIR + '/dndmv_configs', 3)
