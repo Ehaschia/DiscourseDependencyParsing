@@ -21,6 +21,7 @@ from sklearn.model_selection import KFold
 # from chainer import cuda, Variable
 import pyprind
 import random
+import pickle
 
 ###############################
 # Logging
@@ -1695,3 +1696,7 @@ def load_markov_label(path, name, dataset, tag2id):
                     break
         setattr(discourse, 'cluster_label', int_tags)
     return tag_dict
+
+
+def load_embedding(path):
+    return pickle.load(open(path, 'rb'))

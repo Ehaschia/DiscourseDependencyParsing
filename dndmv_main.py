@@ -114,15 +114,19 @@ def load_scidtb(cfg: Dict):
     remove_root(test)
     remove_root(dev)
     train_dataset = ScidtbDatasetWithEmb(train, vocab_word=vocab_word, vocab_postag=vocab_postag, vocab_deprel=vocab_deprel,
-                                         vocab_relation=vocab_relation, encoder=cfg["encoder"])
+                                         vocab_relation=vocab_relation, encoder=cfg["encoder"], pretrained=cfg['embedding'])
     test_dataset = ScidtbDatasetWithEmb(test, vocab_word=vocab_word, vocab_postag=vocab_postag, vocab_deprel=vocab_deprel,
-                                        vocab_relation=vocab_relation, encoder=cfg["encoder"])
+                                        vocab_relation=vocab_relation, encoder=cfg["encoder"], pretrained=cfg['embedding'])
     dev_dataset = ScidtbDatasetWithEmb(dev, vocab_word=vocab_word, vocab_postag=vocab_postag, vocab_deprel=vocab_deprel,
-                                       vocab_relation=vocab_relation, encoder=cfg["encoder"])
-    # utils.writelog("Build Kmeans cluster")
-    std = train_dataset.norm_embed(None)
-    dev_dataset.norm_embed(std)
-    test_dataset.norm_embed(std)
+                                       vocab_relation=vocab_relation, encoder=cfg["encoder"], pretrained=cfg['embedding'])
+    utils.writelog("Build Kmeans cluster")
+    if cfg['norm']:
+        std = train_dataset.norm_embed(None)
+        dev_dataset.norm_embed(std)
+        test_dataset.norm_embed(std)
+
+    # TODO alert here change dim_word_emb
+    cfg['dim_word_emb'] = train_dataset[0].context_embed_np.shape[-1]
 
     # kcluster labels
     # kmeans = train_dataset.kmeans(cfg["kcluster"], 42)

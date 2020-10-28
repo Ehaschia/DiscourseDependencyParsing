@@ -944,38 +944,44 @@ class ScidtbInstanceWithEmb(ScidtbInstance):
     # here property implement is bad.
     # https://python3-cookbook.readthedocs.io/zh_CN/latest/c08/p08_extending_property_in_subclass.html
     # @property
-    # endpoint method concat begin and end [e_i, e_j]
-    # TODO different encoding method implement
-    def build_context_embed_np(self) -> Optional[np.ndarray]:
+    def build_endpoint_embed_np(self) -> Optional[np.ndarray]:
         if self.ds.cs_encoder is None:
             return None
-        if self.context_embed_np is None:
-            edus_representation = self.ds.cs_encoder.sent_sensitive_encode(self.entry)
-            final = []
-            for edu_representation in edus_representation:
-                edu_representation = torch.cat([edu_representation[0], edu_representation[-1]], dim=-1)
-                final.append(edu_representation)
-            final = torch.stack(final, dim=0).detach().cpu().numpy()
-            self.context_embed_np = final
+        edus_representation = self.ds.cs_encoder.sent_sensitive_encode(self.entry)
+        final = []
+        for edu_representation in edus_representation:
+            edu_representation = torch.cat([edu_representation[0], edu_representation[-1]], dim=-1)
+            final.append(edu_representation)
+        final = torch.stack(final, dim=0).detach().cpu().numpy()
+        self.context_embed_np = final
         return self.context_embed_np
 
 
 class ScidtbDatasetWithEmb(ScidtbDataset):
     def __init__(self, instance_list: List[DataInstance], vocab_word: OrderedDict= None, vocab_postag: OrderedDict=None,
-                 vocab_deprel: OrderedDict=None, vocab_relation: OrderedDict=None, encoder: str='bert'):
+                 vocab_deprel: OrderedDict=None, vocab_relation: OrderedDict=None, encoder: str='bert', pretrained=None):
         super().__init__(instance_list, vocab_word, vocab_postag, vocab_deprel, vocab_relation)
         self.instances = []
         for idx, instance in enumerate(instance_list):
             self.instances.append(ScidtbInstanceWithEmb(idx, instance, self))
         if encoder == 'bert':
             self.cs_encoder = CSEncoder(encoder, gpu=True)
+        elif encoder == 'None':
+            self.cs_encoder = None
         else:
             raise NotImplementedError
+
+        # load pretrained
+        if pretrained is not None:
+            embeddings = utils.load_embedding(pretrained)
+            for ins in self.instances:
+                # Alert here remove embedding of <root>
+                ins.context_embed_np = embeddings[ins.name][1:]
 
     def norm_embed(self, std):
         embed_np = []
         for instance in self.instances:
-            embed_np.append(instance.build_context_embed_np())
+            embed_np.append(instance.context_embed_np)
         embed_np = np.concatenate(embed_np, axis=0)
         if std is None:
             std = np.std(embed_np)
@@ -997,7 +1003,8 @@ class ScidtbDatasetWithEmb(ScidtbDataset):
             instance.cluster_label = labels
 
     def clean_encoder(self):
-        self.cs_encoder.clean()
+        if self.cs_encoder is not None:
+            self.cs_encoder.clean()
 
     @staticmethod
     def collect_fn(batch_raw_data: List[ScidtbInstanceWithEmb]):
@@ -1092,7 +1099,7 @@ class ScidtbDatasetWithEmb(ScidtbDataset):
             # maxlen = max([sent_map_ins.shape[0] for sent_map_ins in sent_map_np])
             sent_map_array = pad_sequence(list(map(torch.tensor, sent_map_np)), batch_first=True, padding_value=pad).long()
 
-        context_embed_np = [ins.build_context_embed_np() for ins in batch_raw_data]
+        context_embed_np = [ins.context_embed_np for ins in batch_raw_data]
         if context_embed_np is None:
             context_embed_array = None
         else:

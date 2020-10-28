@@ -25,7 +25,7 @@ class BaseGenerator:
         for idx, file_name in enumerate(onlyfiles):
             cuda_idx = idx % batch + 1
             run_prefix = cuda + '=' + str(cuda_idx) + ' ' + python + ' ' + program
-            clis[cuda_idx].append(run_prefix + ' --config ' + dir_path + file_name + '\n')
+            clis[idx].append(run_prefix + ' --config ' + dir_path + file_name + '\n')
 
         for f_name, cli in zip(b, clis):
             with open(f_name, 'w') as f:
