@@ -799,15 +799,14 @@ def constituent_index(fake_len: int) -> Tuple[
 
     return span2id, id2span, ijss, ikcs, ikis, kjcs, kjis, basic_span
 
-def valid_check(sbnds, left, right, complete=True):
+# check whether left right cross the span
+def cross_check(sbnds, left, right):
     inner = False
     for sbnd_begin, sbnd_end in sbnds:
         if sbnd_begin <= left <= right <= sbnd_end:
             inner = True
             break
-    if inner and not complete:
-        return False
-    return True
+    return not inner
 
 # consider sbnd boundary
 def discourse_constituent_index(dlen: int, sbnds: List[Tuple[int, int]]) -> Tuple[
@@ -900,22 +899,21 @@ def discourse_constituent_index(dlen: int, sbnds: List[Tuple[int, int]]) -> Tupl
             ijss.append(id)
             for k in range(i, j):
                 # two complete spans to form an incomplete span
-                ikis[id].append(span2id[i, k, 1])
-                kjis[id].append(span2id[k + 1, j, 0])
+                if cross_check(root_shifted_sbnds, k, k+1):
+                    ikis[id].append(span2id[i, k, 1])
+                    kjis[id].append(span2id[k + 1, j, 0])
                 # one complete span, one incomplete span to form a complete span
-                if valid_check(root_shifted_sbnds, k, j, complete=False):
-                    ikcs[id].append(span2id[i, k, 0])
-                    kjcs[id].append(span2id[k, j, 0])
+                ikcs[id].append(span2id[i, k, 0])
+                kjcs[id].append(span2id[k, j, 0])
             id = span2id[i, j, 1]
             ijss.append(id)
             for k in range(i, j + 1):
                 # two complete spans to form an incomplete span
-                if k < j and (i != 0 or k == 0):
+                if k < j and (i != 0 or k == 0) and cross_check(root_shifted_sbnds, k, k+1):
                     ikis[id].append(span2id[i, k, 1])
                     kjis[id].append(span2id[k + 1, j, 0])
                 # one incomplete span, one complete span to form a complete span
-                # check valid
-                if k > i and valid_check(root_shifted_sbnds, i, k, complete=False):
+                if k > i:
                     ikcs[id].append(span2id[i, k, 1])
                     kjcs[id].append(span2id[k, j, 1])
 
@@ -1421,12 +1419,14 @@ def batch_inside_prob(trans_scores, dec_scores, tag_prop, len_array, mode='sum',
 
 # # debug batch inside
 # if __name__ == '__main__':
-#     torch.random.manual_seed(42)
+#     torch.random.manual_seed(48)
 #
-#     dlen = 5
+#     dlen = 10
 #     cv = 2
 #     dv = 2
-#     sbnds = [(0, 2), (3, 3)]
+#     sbnds = [(0, 1), (2, 3), (4, 8)]
+#     pbnds = [(0, 0), (1, 2)]
+#
 #     tscore = -1.0 * torch.rand(dlen, dlen, cv)
 #     dscore = -1.0 * torch.rand(dlen, 2, dv, 2)
 #
@@ -1437,4 +1437,5 @@ def batch_inside_prob(trans_scores, dec_scores, tag_prop, len_array, mode='sum',
 #     dscore_np = dscore.numpy()
 #     res = discourse_inside(tscore, dscore, sbnds)
 #     idx = discourse_parse(tscore_np, dscore_np, sbnds)
-#     # print(res)
+#     print(res)
+#     print(idx[0])
