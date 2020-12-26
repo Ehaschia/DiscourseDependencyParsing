@@ -799,25 +799,31 @@ def constituent_index(fake_len: int) -> Tuple[
 
     return span2id, id2span, ijss, ikcs, ikis, kjcs, kjis, basic_span
 
-# check whether left right cross the span
-def cross_check(sbnds, left, right):
+# check whether the span is valid
+# the span should cross the bnds
+def cross_check(bnds, left, right):
     inner = False
-    for sbnd_begin, sbnd_end in sbnds:
-        if sbnd_begin <= left <= right <= sbnd_end:
+    for bnd_begin, bnd_end in bnds:
+        if bnd_begin <= left <= right <= bnd_end:
             inner = True
             break
     return not inner
 
 # consider sbnd boundary
-def discourse_constituent_index(dlen: int, sbnds: List[Tuple[int, int]]) -> Tuple[
+def discourse_constituent_index(dlen: int, sbnds: List[Tuple[int, int]], pbnds: List[Tuple[int, int]]= None) -> Tuple[
     np.ndarray, np.ndarray, List[int], List[List[int]], List[List[int]],
     List[List[int]], List[List[int]], np.ndarray]:
     """generate span(left,right,direction) index"""
 
     id2span = []
     span2id = npiempty((dlen, dlen, 2))
-    root_shifted_sbnds = [(begin+1, end+1) for begin, end in sbnds]
+    root_shifted_sbnds = [(begin+1, end+1) for begin, end in sbnds if begin >= 0]
     root_shifted_sbnds = [(0, 0)] + root_shifted_sbnds
+
+    if pbnds is not None:
+        root_shifted_pbnds = [(sbnds[p_begin][0]+1, sbnds[p_end][-1]+1) for p_begin, p_end in pbnds if p_begin >= 0]
+        root_shifted_pbnds = [(0, 0)] + root_shifted_pbnds
+
     # this part consider inner sentence span
     # ignore -1
     for sbnd_begin, sbnd_end in root_shifted_sbnds:
@@ -828,15 +834,41 @@ def discourse_constituent_index(dlen: int, sbnds: List[Tuple[int, int]]) -> Tupl
                 for direction in range(2): # 0 is left 1 is right
                     span2id[left_idx, right_idx, direction] = len(id2span)
                     id2span.append([left_idx, right_idx, direction])
-    # this part consider cross sentence span
-    for sbnd_begin, sbnd_end in root_shifted_sbnds:
-        if sbnd_begin < 0:
-            break
-        for left_idx in range(sbnd_begin, sbnd_end+1):
-            for right_idx in range(sbnd_end+1, dlen):
-                for direction in range(2):
-                    span2id[left_idx, right_idx, direction] = len(id2span)
-                    id2span.append([left_idx, right_idx, direction])
+    # this part consider inner paragraph, cross sentence span
+    if pbnds is not None:
+        for pbnd_begin, pbnd_end in root_shifted_pbnds:
+            if pbnd_begin < -1:
+                break
+            for left_idx in range(pbnd_begin, pbnd_end+1):
+                for right_idx in range(left_idx+1, pbnd_end+1):
+                    # check whether valid
+                    if not cross_check(root_shifted_sbnds, left_idx, right_idx):
+                        continue
+
+                    for direction in range(2):  # 0 is left 1 is right
+                        span2id[left_idx, right_idx, direction] = len(id2span)
+                        id2span.append([left_idx, right_idx, direction])
+
+        # this part consider cross paragraph span
+        for pbnd_begin, pbnd_end in root_shifted_pbnds:
+            if pbnd_begin < -1:
+                break
+            for left_idx in range(pbnd_begin, pbnd_end+1):
+                for right_idx in range(pbnd_end+1, dlen):
+                    for direction in range(2):
+                        span2id[left_idx, right_idx, direction] = len(id2span)
+                        id2span.append([left_idx, right_idx, direction])
+    else:
+        # this part consider cross sentence span
+        for sbnd_begin, sbnd_end in root_shifted_sbnds:
+            if sbnd_begin < 0:
+                break
+            for left_idx in range(sbnd_begin, sbnd_end + 1):
+                for right_idx in range(sbnd_end + 1, dlen):
+                    for direction in range(2):
+                        span2id[left_idx, right_idx, direction] = len(id2span)
+                        id2span.append([left_idx, right_idx, direction])
+
     id2span = npasarray(id2span)
 
     basic_span = npiempty((2 * dlen))
@@ -880,6 +912,42 @@ def discourse_constituent_index(dlen: int, sbnds: List[Tuple[int, int]]) -> Tupl
                     if k > i:
                         ikcs[id].append(span2id[i, k, 1])
                         kjcs[id].append(span2id[k, j, 1])
+    if pbnds is not None:
+        # inner paragraph cross sentence part
+        for pbnd_begin, pbnd_end in root_shifted_pbnds:
+            if pbnd_begin < -1:
+                break
+            span_len = pbnd_end - pbnd_begin + 1
+            for length in range(1, span_len):
+                for i in range(pbnd_begin, pbnd_begin+span_len - length):
+                    j = i + length
+                    # in same span, continue
+                    if not cross_check(root_shifted_sbnds, i, j):
+                        continue
+                    id = span2id[i, j, 0]
+                    ijss.append(id)
+                    for k in range(i, j):
+                        # two complete spans to form an incomplete span
+                        if cross_check(root_shifted_sbnds, k, k+1):
+                            ikis[id].append(span2id[i, k, 1])
+                            kjis[id].append(span2id[k + 1, j, 0])
+                        # one complete span, one incomplete span to form a complete span
+                        ikcs[id].append(span2id[i, k, 0])
+                        kjcs[id].append(span2id[k, j, 0])
+                    id = span2id[i, j, 1]
+                    ijss.append(id)
+                    for k in range(i, j + 1):
+                        # two complete spans to form an incomplete span
+                        if k < j and (i != 0 or k == 0) and cross_check(root_shifted_sbnds, k, k+1):
+                            ikis[id].append(span2id[i, k, 1])
+                            kjis[id].append(span2id[k + 1, j, 0])
+                        # one incomplete span, one complete span to form a complete span
+                        # check valid
+                        if k > i:
+                            ikcs[id].append(span2id[i, k, 1])
+                            kjcs[id].append(span2id[k, j, 1])
+    else:
+        root_shifted_pbnds = root_shifted_sbnds
 
     # cross sentence part.
     # only consider complete inner sentence span to cross sentence span
@@ -888,18 +956,13 @@ def discourse_constituent_index(dlen: int, sbnds: List[Tuple[int, int]]) -> Tupl
         for i in range(0, dlen-length):
             j = i + length
             # in same span, continue
-            inner = False
-            for sbnd_begin, sbnd_end in root_shifted_sbnds:
-                if sbnd_begin <= i < j <= sbnd_end:
-                    inner = True
-                    break
-            if inner:
+            if not cross_check(root_shifted_pbnds, i, j):
                 continue
             id = span2id[i, j, 0]
             ijss.append(id)
             for k in range(i, j):
                 # two complete spans to form an incomplete span
-                if cross_check(root_shifted_sbnds, k, k+1):
+                if cross_check(root_shifted_pbnds, k, k+1):
                     ikis[id].append(span2id[i, k, 1])
                     kjis[id].append(span2id[k + 1, j, 0])
                 # one complete span, one incomplete span to form a complete span
@@ -909,7 +972,7 @@ def discourse_constituent_index(dlen: int, sbnds: List[Tuple[int, int]]) -> Tupl
             ijss.append(id)
             for k in range(i, j + 1):
                 # two complete spans to form an incomplete span
-                if k < j and (i != 0 or k == 0) and cross_check(root_shifted_sbnds, k, k+1):
+                if k < j and (i != 0 or k == 0) and cross_check(root_shifted_pbnds, k, k+1):
                     ikis[id].append(span2id[i, k, 1])
                     kjis[id].append(span2id[k + 1, j, 0])
                 # one incomplete span, one complete span to form a complete span
@@ -1030,7 +1093,7 @@ def batch_discourse_inside(trans_scores: Tensor, dec_scores: Tensor, len_array: 
     return None, None, partition_scores
 
 
-def discourse_inside(trans_scores: Tensor, dec_scores: Tensor, sbnds: List[Tuple[int, int]], mode: str = 'sum')\
+def discourse_inside(trans_scores: Tensor, dec_scores: Tensor, sbnds: List[Tuple[int, int]], pbnds: List[Tuple[int, int]]=None, mode: str = 'sum')\
         -> Tuple[List[Optional[Tensor]], List[Optional[Tensor]], Tensor]:
 
     # trans_scores: head, child, cv
@@ -1038,7 +1101,7 @@ def discourse_inside(trans_scores: Tensor, dec_scores: Tensor, sbnds: List[Tuple
     op = partial(torch.logsumexp, dim=0) if mode == 'sum' else lambda x: torch.max(x, dim=0)[0]
     dlen, dlen, cv = trans_scores.shape
     nspan = (dlen + 1) * dlen
-    span2id, id2span, ijss, ikcs, ikis, kjcs, kjis, basic_span = discourse_constituent_index(dlen, sbnds)
+    span2id, id2span, ijss, ikcs, ikis, kjcs, kjis, basic_span = discourse_constituent_index(dlen, sbnds, pbnds)
 
     # complete/incomplete_table:   [nspan], batch, dv
     ictable: List[Optional[Tensor]] = [None for _ in range(nspan)]
@@ -1152,7 +1215,7 @@ def batch_parse(trans_scores, dec_scores, len_array):
     return heads, head_valences, valences
 
 
-def batch_discourse_parse(trans_scores, dec_scores, len_array, sbnds_list):
+def batch_discourse_parse(trans_scores, dec_scores, len_array, sbnds_list, pbnds_list):
     len_list = len_array.detach().cpu().numpy().tolist()
     batch_trans_scores_np = trans_scores.detach().cpu().numpy()
     batch_dec_scores_np = dec_scores.detach().cpu().numpy()
@@ -1161,7 +1224,7 @@ def batch_discourse_parse(trans_scores, dec_scores, len_array, sbnds_list):
         # here consider the root
         dlen += 1
         heads, head_valences, valences = discourse_parse(batch_trans_scores_np[idx][:dlen, :dlen, :],
-                                                         batch_dec_scores_np[idx][:dlen], sbnds_list[idx])
+                                                         batch_dec_scores_np[idx][:dlen], sbnds_list[idx], pbnds_list[idx])
         batch_heads.append(heads)
         batch_head_valences.append(valences)
         batch_valences.append(valences)
@@ -1169,13 +1232,13 @@ def batch_discourse_parse(trans_scores, dec_scores, len_array, sbnds_list):
 
 
 # not batch discourse parse on cpu
-def discourse_parse(trans_scores, dec_scores, sbnds):
+def discourse_parse(trans_scores, dec_scores, sbnds, pbnds=None):
     # trans_scores: head, child, cv
     # dec_scores: head, direction, dv, decision
 
     dlen, dlen, cv = trans_scores.shape
     nspan = (dlen + 1) * dlen
-    span2id, id2span, ijss, ikcs, ikis, kjcs, kjis, basic_span = discourse_constituent_index(dlen, sbnds)
+    span2id, id2span, ijss, ikcs, ikis, kjcs, kjis, basic_span = discourse_constituent_index(dlen, sbnds, pbnds)
 
     complete_table = np.full((nspan, 2), -np.inf)
     incomplete_table = np.full((nspan, 2), -np.inf)
@@ -1418,24 +1481,24 @@ def batch_inside_prob(trans_scores, dec_scores, tag_prop, len_array, mode='sum',
 
 
 # # debug batch inside
-# if __name__ == '__main__':
-#     torch.random.manual_seed(48)
-#
-#     dlen = 10
-#     cv = 2
-#     dv = 2
-#     sbnds = [(0, 1), (2, 3), (4, 8)]
-#     pbnds = [(0, 0), (1, 2)]
-#
-#     tscore = -1.0 * torch.rand(dlen, dlen, cv)
-#     dscore = -1.0 * torch.rand(dlen, 2, dv, 2)
-#
-#     # gold = batch_inside(tscore.unsqueeze(0),
-#     #                     dscore.unsqueeze(0),
-#     #                     torch.tensor([dlen]).long())
-#     tscore_np = tscore.numpy()
-#     dscore_np = dscore.numpy()
-#     res = discourse_inside(tscore, dscore, sbnds)
-#     idx = discourse_parse(tscore_np, dscore_np, sbnds)
-#     print(res)
-#     print(idx[0])
+if __name__ == '__main__':
+    torch.random.manual_seed(46)
+
+    dlen = 10
+    cv = 2
+    dv = 2
+    sbnds = [(0, 1), (2, 4), (5, 8)]
+    pbnds = [(0, 0), (1, 2)]
+
+    tscore = -1.0 * torch.rand(dlen, dlen, cv)
+    dscore = -1.0 * torch.zeros(dlen, 2, dv, 2)
+
+    # gold = batch_inside(tscore.unsqueeze(0),
+    #                     dscore.unsqueeze(0),
+    #                     torch.tensor([dlen]).long())
+    tscore_np = tscore.numpy()
+    dscore_np = dscore.numpy()
+    res = discourse_inside(tscore, dscore, sbnds)
+    idx = discourse_parse(tscore_np, dscore_np, sbnds)
+    print(res)
+    print(idx[0])
