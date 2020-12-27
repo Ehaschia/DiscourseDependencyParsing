@@ -65,7 +65,7 @@ parameters = {
     "kcluster": ["50"],
     "share_valence_emb": ["True"],
     "pca": ["False"],
-    "markov_label": ["gaussian", "nice"],
+    "markov_label": ["\'gaussian\'", "\'nice\'"],
 }
 
 keys = list(parameters.keys())

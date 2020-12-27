@@ -200,7 +200,7 @@ def load_rstdt(cfg: Dict):
     # utils.writelog("Update markov label number: {}".format(len(tag2ids)))
     # cfg['cluster'] = len(tag2ids)
 
-    cfg["num_tag"] = len(vocab_postag)
+    cfg["num_tag"] = cfg['cluster']
     cfg["num_pos"] = len(vocab_postag)
     cfg["num_word"] = len(vocab_word)
     cfg["num_deprel"] = len(vocab_deprel)
