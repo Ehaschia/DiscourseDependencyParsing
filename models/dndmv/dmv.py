@@ -59,7 +59,7 @@ class DMV(nn.Module):
         self.cfg = EasyDict(cfg)
         self.mode = mode
 
-        n, c = self.cfg.num_tag, self.cfg.cv
+        n, c = self.cfg.cluster, self.cfg.cv
 
         self.root_param = nn.Parameter(torch.zeros(n), requires_grad=True) if 'r' in mode else None
         self.dec_param = nn.Parameter(torch.zeros(n, 2, 2, 2), requires_grad=True) if 'd' in mode else None
@@ -139,7 +139,7 @@ class DMV(nn.Module):
             given = {m: data[m] for m in mode}
         out = {k: None for k in mode}
 
-        n, c = self.cfg.num_tag, self.cfg.cv
+        n, c = self.cfg.cluster, self.cfg.cv
         batch_size, length = tag_array.shape
 
         if given.get('t') is not None:
@@ -600,7 +600,7 @@ class DMV(nn.Module):
         mode=1, sum over batch, trace[batch, real_len] to counter[num_tag]
         """
         batch_size, max_len = tag_array.shape
-        num_tag = num_tag or self.cfg.num_tag
+        num_tag = num_tag or self.cfg.cluster
         with torch.no_grad():
             if mode == 0:
                 root_out = torch.zeros(batch_size, num_tag, device=root_trace.device)
@@ -620,7 +620,7 @@ class DMV(nn.Module):
         mode=1, sum over batch, trace[batch, sentence_len, ...] to counter[num_tag, ...]
         """
         batch_size, max_len = tag_array.shape
-        num_tag = num_tag or self.cfg.num_tag
+        num_tag = num_tag or self.cfg.cluster
         dec_post_dim = (2, 2, 2)
         with torch.no_grad():
             dec_trace = torch.sum(dec_trace, 2)
@@ -645,7 +645,7 @@ class DMV(nn.Module):
          mode=1, sum over batch, trace[batch, len, len, ...] to counter[ntag, ntag, ...]
          """
         batch_size, max_len = tag_array.shape
-        num_tag = num_tag or self.cfg.num_tag
+        num_tag = num_tag or self.cfg.cluster
         trans_post_dim = (2, self.cfg.cv)
         with torch.no_grad():
             head_ids = tag_array.unsqueeze(2).expand(-1, -1, max_len).flatten()
@@ -719,7 +719,7 @@ class DMVProb(DMV):
         """param[tag_num, ...] to param[batch, sentence_len, ...]"""
         # trans_scores:     batch, head, ntag, child, cv
         # dec_scores:       batch, head, ntag, direction, dv, decision
-        n, c = self.cfg.num_tag, self.cfg.cv
+        n, c = self.cfg.cluster, self.cfg.cv
         batch_size, fake_len, _ = tag_prob.shape
 
         trans_scores = self.trans_param.view(1, 1, n, 1, n, 2, c) \
@@ -743,7 +743,7 @@ class DMVProb(DMV):
     def prepare_tag_array(self, tag_array, tag_prob):
         batch_size, _ = tag_array.shape
         tag_array = torch.cat([torch.zeros(batch_size, 1, dtype=torch.long, device='cuda'), tag_array], dim=1)
-        tag_prob = torch.cat([torch.zeros(batch_size, 1, self.cfg.num_tag, device='cuda'), tag_prob], dim=1)
+        tag_prob = torch.cat([torch.zeros(batch_size, 1, self.cfg.cluster, device='cuda'), tag_prob], dim=1)
         tag_prob[:, 0, 0] = 1.
         return tag_array, tag_prob
 
