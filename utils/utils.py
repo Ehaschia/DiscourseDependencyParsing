@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 import gensim
 import torch
+from easydict import EasyDict
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.model_selection import KFold
 # from chainer import cuda, Variable
@@ -26,6 +27,8 @@ import pickle
 ###############################
 # Logging
 from torch import Tensor
+
+import treesamplers
 
 logger = getLogger("logger")
 logger.setLevel(INFO)
@@ -1700,3 +1703,56 @@ def load_markov_label(path, name, dataset, tag2id):
 
 def load_embedding(path):
     return pickle.load(open(path, 'rb'))
+
+class PCFG:
+    def __init__(self, rule_mat, cfg):
+        self.cfg = cfg
+
+        # normalize
+        for i in range(len(rule_mat)):
+            i_all = float(sum(rule_mat[i]))
+            if i_all == 0:
+                continue
+            else:
+                # prob_mat[i] = additive_smoothing(prob_mat[i], alpha)
+                rule_mat[i] = getattr(self, self.cfg.smooth)(rule_mat[i], self.cfg.smooth_alpha)
+
+        # log and replace nan
+        rule_mat = np.log(rule_mat)
+        for i in range(len(rule_mat)):
+            for j in range(len(rule_mat)):
+                import math
+                if np.abs(rule_mat[i][j]) == np.inf or math.isnan(rule_mat[i][j]):
+                    rule_mat[i][j] = -1e5
+
+        self.rule_mat = rule_mat
+
+    def additive_smoothing(cls, cnts, alpha):
+        total_cnt = sum(cnts)
+        d = len(cnts)
+        prob = [0] * d
+        for idx, cnt in enumerate(cnts):
+            prob[idx] = (cnt + alpha) / (total_cnt + alpha * d)
+        return prob
+
+    def uniform_smoothing(cls, cnts, alpha):
+        return (np.array(cnts) != 0).astype(float)
+
+    @staticmethod
+    def build(dataset, cfg: EasyDict, sampler):
+        # alert here the dataset not inclute root, thus we set a new label for root
+        cluster_num = cfg.kcluster
+        rule_mat = [[0] * (cluster_num + 1) for _ in range(cluster_num + 1)]
+        sampler = treesamplers.TreeSampler(['RB', 'X', 'RB'])
+        # build rule_mat
+        for inst in dataset:
+            label = [cluster_num] + inst.cluster_label
+            tree = sampler.sample(inputs=inst.edu_ids, edus=inst.edus,
+                                  edus_head=inst.edus_head, sbnds=inst.sbnds, pbnds=inst.pbnds,
+                                  has_root=False)
+            for arc in tree:
+                rule_mat[label[arc[0]]][label[arc[1]]] += 1
+
+        return PCFG(rule_mat, cfg)
+
+    # def proir_mask(self, label_array):

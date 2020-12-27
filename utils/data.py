@@ -903,17 +903,6 @@ class ScidtbDataset(Dataset):
 
         sent_map_np = [ins.sent_map_np for ins in batch_raw_data]
 
-        # if sent_map_np[0] is None:
-        #     sent_map_array = None
-        # else:
-        #     pad = 0
-        #     sent_len = max(list(map(max, [list(map(len, sent_map_ins)) for sent_map_ins in sent_map_np])))
-        #     for idx, sent_map_ins in enumerate(sent_map_np):
-        #         x, y = sent_map_ins.shape
-        #         zeros = np.zeros((x, sent_len-y))
-        #         sent_map_np[idx] = np.concatenate((sent_map_ins, zeros), axis=1)
-        #     sent_map_array = pad_sequence(list(map(torch.tensor, sent_map_np)), batch_first=True, padding_value=pad).long()
-
         if sent_map_np[0] is None:
             sent_map_array = None
         else:
@@ -941,35 +930,14 @@ class ScidtbInstanceWithEmb(ScidtbInstance):
     def __getattr__(self, item):
         return getattr(self.entry, item)
 
-    # here property implement is bad.
-    # https://python3-cookbook.readthedocs.io/zh_CN/latest/c08/p08_extending_property_in_subclass.html
-    # @property
-    def build_endpoint_embed_np(self) -> Optional[np.ndarray]:
-        if self.ds.cs_encoder is None:
-            return None
-        edus_representation = self.ds.cs_encoder.sent_sensitive_encode(self.entry)
-        final = []
-        for edu_representation in edus_representation:
-            edu_representation = torch.cat([edu_representation[0], edu_representation[-1]], dim=-1)
-            final.append(edu_representation)
-        final = torch.stack(final, dim=0).detach().cpu().numpy()
-        self.context_embed_np = final
-        return self.context_embed_np
-
 
 class ScidtbDatasetWithEmb(ScidtbDataset):
     def __init__(self, instance_list: List[DataInstance], vocab_word: OrderedDict= None, vocab_postag: OrderedDict=None,
-                 vocab_deprel: OrderedDict=None, vocab_relation: OrderedDict=None, encoder: str='bert', pretrained=None):
+                 vocab_deprel: OrderedDict=None, vocab_relation: OrderedDict=None, pretrained=None):
         super().__init__(instance_list, vocab_word, vocab_postag, vocab_deprel, vocab_relation)
         self.instances = []
         for idx, instance in enumerate(instance_list):
             self.instances.append(ScidtbInstanceWithEmb(idx, instance, self))
-        if encoder == 'bert':
-            self.cs_encoder = CSEncoder(encoder, gpu=True)
-        elif encoder == 'None':
-            self.cs_encoder = None
-        else:
-            raise NotImplementedError
 
         # load pretrained
         if pretrained is not None:
@@ -1001,10 +969,6 @@ class ScidtbDatasetWithEmb(ScidtbDataset):
         for instance in self.instances:
             labels = kmeans.predict(instance.build_context_embed_np())
             instance.cluster_label = labels
-
-    def clean_encoder(self):
-        if self.cs_encoder is not None:
-            self.cs_encoder.clean()
 
     @staticmethod
     def collect_fn(batch_raw_data: List[ScidtbInstanceWithEmb]):
@@ -1120,5 +1084,290 @@ class ScidtbDatasetWithEmb(ScidtbDataset):
                                              edus_array=edus_array, sent_map_array=sent_map_array,
                                              context_embed_array=context_embed_array,
                                              cluster_label_array=cluster_label_array)
+
+
+
+DiscourseBatchData = namedtuple("DiscourseBatchData", ('id_array', 'len_array','edus_array',
+                                                       'edus_len_array', 'sent_map_array',
+                                                       'paragraph_map_array'))
+
+# convert dataInstance to tensor friendly in this class
+class DiscourseInstance:
+    def __init__(self, id: int, entry: DataInstance, dataset: Optional['DiscourseDataset'] = None):
+        self.entry = entry
+        self.id = id
+        self.ds = dataset
+
+        self._edus_list = None
+        self._edus_len_np = None
+        self._sent_map_np = None
+        self._paragraph_map_np = None
+
+        # kmeans parameter
+        self.cluster_label = None
+
+    def __len__(self):
+        return len(self.entry.arcs)
+
+    def __repr__(self):
+        return f'DiscourseInstance(id={self.id}, name={self.entry.name}, len={len(self)})'
+
+    def __str__(self):
+        return f'DiscourseInstance(str={" ".join(self._edus_list)})'
+
+    def __hash__(self):
+        return hash(self.entry.name)
+
+    def __getattr__(self, item):
+        return getattr(self.entry, item)
+
+    @property
+    def edus_list(self) -> Optional[List]:
+        if self.ds.word_vocab is None:
+            return None
+        if self._edus_list is None:
+            edus_list = []
+            max_len = 0
+            for edu in self.edus:
+                max_len = len(edu) if len(edu) > max_len else max_len
+                word_list = []
+                for word in edu:
+                    word_list.append(self.ds.word_vocab[word])
+                edus_list.append(word_list)
+            self._edus_list = edus_list
+            del edus_list
+        return self._edus_list
+
+    @property
+    def edus_len_np(self) -> Optional[np.ndarray]:
+        if self._edus_len_np is None:
+            self._edus_len_np = npasarray(list(map(len, self.edus)))
+        return self._edus_len_np
+
+    # differren version of sbnds
+    # @property
+    # def sent_map_np(self) -> Optional[np.ndarray]:
+    #     if self._sent_map_np is None:
+    #         self._sent_map_np = make_same_sent_map(self.edus + ['root'], self.sbnds)
+    #         self._sent_map_np = self._sent_map_np[1:, 1:]
+    #     return self._sent_map_np
+
+    @property
+    def sent_map_np(self) -> Optional[np.ndarray]:
+        if self._sent_map_np is None:
+            self._sent_map_np = np.array(self.sbnds)
+        return self._sent_map_np
+
+    @property
+    def paragraph_map_np(self) -> Optional[np.ndarray]:
+        if self._paragraph_map_np is None:
+            self._paragraph_map_np = np.array(self.pbnds)
+        return self._paragraph_map_np
+
+class DiscourseDataset(Dataset):
+    def __init__(self, instance_list: List[DataInstance], vocab_word: OrderedDict= None, vocab_postag: OrderedDict= None,
+                 vocab_deprel: OrderedDict= None, vocab_relation: OrderedDict= None):
+        # cache: only cache instances
+        self.instances = []
+        for idx, instance in enumerate(instance_list):
+            self.instances.append(DiscourseInstance(idx, instance, self))
+        self.word_vocab = vocab_word
+        self.pos_vocab = vocab_postag
+        self.deprel_vocab = vocab_deprel
+        self.relation_vocab = vocab_relation
+
+    def get_dataloader(self, same_len: bool, batch_size: int, drop_last: bool, shuffle: int,
+                       num_workers: int, min_len: int = 1, max_len: int = 10000):
+        sampler = LengthBucketSampler if same_len else BasicSampler
+
+        return DataLoader(dataset=self,
+                          num_workers=num_workers,
+                          pin_memory=True,
+                          batch_sampler=sampler(self, batch_size, drop_last, shuffle, min_len, max_len),
+                          collate_fn=self.collect_fn)
+
+    def __len__(self):
+        return len(self.instances)
+
+    def __getitem__(self, item):
+        return self.instances[item]
+
+    def __iter__(self):
+        return iter(self.instances)
+
+    def get_all_len(self):
+        return torch.tensor([len(i) for i in self.instances])
+
+    @staticmethod
+    def collect_fn(batch_raw_data: List[ScidtbInstance]):
+
+        id_array = torch.tensor([d.id for d in batch_raw_data])
+        len_array = torch.tensor([len(d) for d in batch_raw_data])
+
+        edus_list = [ins.edus_list for ins in batch_raw_data]
+        if edus_list[0] is None:
+            edus_array = None
+        else:
+            pad = batch_raw_data[0].ds.word_vocab["<unk>"]
+            max_len = max(list(map(max, [list(map(len, edus_ins)) for edus_ins in edus_list])))
+            # padding to same size [batch, max_edu, max_len]
+            for edus_ins in edus_list:
+                for idx, edu in enumerate(edus_ins):
+                    edus_ins[idx] = edu + [pad] * (max_len - len(edu))
+
+            edus_array = pad_sequence(list(map(torch.tensor, edus_list)), batch_first=True, padding_value=pad).long()
+
+        edus_len_np = [ins.edus_len_np for ins in batch_raw_data]
+        if edus_len_np[0] is None:
+            edus_len_array = None
+        else:
+            pad = 0
+            edus_len_array = pad_sequence(list(map(torch.tensor, edus_len_np)), batch_first=True, padding_value=pad).long()
+
+        sent_map_np = [ins.sent_map_np for ins in batch_raw_data]
+
+        if sent_map_np[0] is None:
+            sent_map_array = None
+        else:
+            pad = -100
+            sent_map_array = pad_sequence(list(map(torch.tensor, sent_map_np)), batch_first=True, padding_value=pad).long()
+
+        paragraph_map_np = [ins.paragraph_map_np for ins in batch_raw_data]
+
+        if paragraph_map_np[0] is None:
+            paragraph_map_array = None
+        else:
+            pad = -100
+            paragraph_map_array = pad_sequence(list(map(torch.tensor, paragraph_map_np)), batch_first=True,
+                                               padding_value=pad).long()
+
+        return DiscourseBatchData(id_array=id_array, len_array=len_array, edus_len_array=edus_len_array,
+                                  edus_array=edus_array, sent_map_array=sent_map_array, paragraph_map_array=paragraph_map_array)
+
+DiscourseWithEmbBatchData = namedtuple("DiscourseWithEmbBatchData", ('id_array', 'len_array','edus_array',
+                                                                     'edus_len_array', 'sent_map_array',
+                                                                     'paragraph_map_array',
+                                                                     'context_embed_array', 'cluster_label_array'))
+
+class DiscourseInstanceWithEmb(DiscourseInstance):
+    def __init__(self, id: int, entry: DataInstance, dataset: 'DiscourseDatasetWithEmb' = None):
+        super().__init__(id, entry, dataset)
+        self.context_embed_np = None
+
+    def __getattr__(self, item):
+        return getattr(self.entry, item)
+
+
+class DiscourseDatasetWithEmb(DiscourseDataset):
+    def __init__(self, instance_list: List[DataInstance], vocab_word: OrderedDict= None, vocab_postag: OrderedDict=None,
+                 vocab_deprel: OrderedDict=None, vocab_relation: OrderedDict=None, pretrained=None):
+        super().__init__(instance_list, vocab_word, vocab_postag, vocab_deprel, vocab_relation)
+        self.instances = []
+        for idx, instance in enumerate(instance_list):
+            self.instances.append(DiscourseInstanceWithEmb(idx, instance, self))
+
+        # load pretrained
+        if pretrained is not None:
+            embeddings = utils.load_embedding(pretrained)
+            for ins in self.instances:
+                # Alert here remove embedding of <root>
+                ins.context_embed_np = embeddings[ins.name][1:]
+        else:
+            raise ValueError('Pretrained path should be provided.')
+
+    def norm_embed(self, std):
+        embed_np = []
+        for instance in self.instances:
+            embed_np.append(instance.context_embed_np)
+        embed_np = np.concatenate(embed_np, axis=0)
+        if std is None:
+            std = np.std(embed_np)
+        for instance in self.instances:
+            instance.context_embed_np = instance.context_embed_np / std
+        return std
+
+    def kmeans(self, kcluster: int, random_seed: int) -> KMeans:
+        embed_np = []
+        for instance in self.instances:
+            embed_np.append(instance.context_embed_np)
+        embed_np = np.concatenate(embed_np, axis=0)
+        kmeans = KMeans(n_clusters=kcluster, random_state=random_seed).fit(embed_np)
+        return kmeans
+
+    def kmeans_label(self, kmeans: KMeans):
+        for instance in self.instances:
+            labels = kmeans.predict(instance.context_embed_np)
+            instance.cluster_label = labels
+
+    @staticmethod
+    def collect_fn(batch_raw_data: List[ScidtbInstanceWithEmb]):
+
+        id_array = torch.tensor([d.id for d in batch_raw_data])
+        len_array = torch.tensor([len(d) for d in batch_raw_data])
+
+        edus_list = [ins.edus_list for ins in batch_raw_data]
+        if edus_list[0] is None:
+            edus_array = None
+        else:
+            pad = batch_raw_data[0].ds.word_vocab["<unk>"]
+            max_len = max(list(map(max, [list(map(len, edus_ins)) for edus_ins in edus_list])))
+            # padding to same size [batch, max_edu, max_len]
+            for edus_ins in edus_list:
+                for idx, edu in enumerate(edus_ins):
+                    edus_ins[idx] = edu + [pad] * (max_len - len(edu))
+
+            edus_array = pad_sequence(list(map(torch.tensor, edus_list)), batch_first=True, padding_value=pad).long()
+
+        edus_len_np = [ins.edus_len_np for ins in batch_raw_data]
+        if edus_len_np[0] is None:
+            edus_len_array = None
+        else:
+            pad = 0
+            edus_len_array = pad_sequence(list(map(torch.tensor, edus_len_np)), batch_first=True, padding_value=pad).long()
+
+        sent_map_np = [ins.sent_map_np for ins in batch_raw_data]
+        # if sent_map_np[0] is None:
+        #     sent_map_array = None
+        # else:
+        #     pad = 0
+        #     sent_len = max(list(map(max, [list(map(len, sent_map_ins)) for sent_map_ins in sent_map_np])))
+        #     for idx, sent_map_ins in enumerate(sent_map_np):
+        #         x, y = sent_map_ins.shape
+        #         zeros = np.zeros((x, sent_len-y))
+        #         sent_map_np[idx] = np.concatenate((sent_map_ins, zeros), axis=1)
+        #     sent_map_array = pad_sequence(list(map(torch.tensor, sent_map_np)), batch_first=True, padding_value=pad).long()
+        if sent_map_np[0] is None:
+            sent_map_array = None
+        else:
+            pad = -100
+            # maxlen = max([sent_map_ins.shape[0] for sent_map_ins in sent_map_np])
+            sent_map_array = pad_sequence(list(map(torch.tensor, sent_map_np)), batch_first=True, padding_value=pad).long()
+
+        paragraph_map_np = [ins.paragraph_map_np for ins in batch_raw_data]
+
+        if paragraph_map_np[0] is None:
+            paragraph_map_array = None
+        else:
+            pad = -100
+            paragraph_map_array = pad_sequence(list(map(torch.tensor, paragraph_map_np)), batch_first=True, padding_value=pad).long()
+
+        context_embed_np = [ins.context_embed_np for ins in batch_raw_data]
+        if context_embed_np is None:
+            context_embed_array = None
+        else:
+            pad = 0.0
+            context_embed_array = pad_sequence(list(map(torch.tensor, context_embed_np)), batch_first=True, padding_value=pad)
+
+        cluster_label_np = [ins.cluster_label for ins in batch_raw_data]
+        if cluster_label_np[0] is None:
+            cluster_label_array = None
+        else:
+            pad = 0
+            cluster_label_array = pad_sequence(list(map(torch.tensor, cluster_label_np)), True, pad).long()
+        return DiscourseWithEmbBatchData(id_array=id_array, len_array=len_array, edus_len_array=edus_len_array,
+                                         edus_array=edus_array, sent_map_array=sent_map_array,
+                                         context_embed_array=context_embed_array,
+                                         cluster_label_array=cluster_label_array,
+                                         paragraph_map_array=paragraph_map_array)
 
 

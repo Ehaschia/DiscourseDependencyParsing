@@ -139,7 +139,7 @@ class DiscriminativeNeuralDMV(nn.Module):
     def train_pipeline(self, arrays: Dict[str, Tensor], tag_array: Tensor, counts: List[Tensor], mode: str = 'tdr') \
             -> Tensor:
         len_array = arrays['len']
-        max_len = arrays['head_pos'].shape[1]
+        max_len = arrays['edus_len'].size()[1]
         mask = make_mask(len_array, max_len)
         params = self(arrays, tag_array, mode)
         for i, m in enumerate(mode):
@@ -199,7 +199,7 @@ class DiscriminativeNeuralDMV(nn.Module):
 
     def forward(self, arrays: Dict[str, Tensor], tag_array: Tensor, mode: str = 'tdr') -> List[Tensor]:
         len_array = arrays['len']
-        max_len = arrays['head_word'].shape[1]  # in sub_batch, max(len_array) != max_len
+        max_len = arrays['edus_len'].size()[1]  # in sub_batch, max(len_array) != max_len
         batch_size = len(len_array)
         self.edus_len = arrays["edus_len"]
         self.edus = arrays["edus"][:, :, :torch.max(self.edus_len)]

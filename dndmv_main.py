@@ -19,13 +19,12 @@ from models.dndmv.dmv import DMV
 from models.dndmv.dndmv import DiscriminativeNeuralDMV
 # from models.dndmv.trainer.online_em_trainer import OnlineEMTrainer
 from models.dndmv.trainer.e2e_trainer import OnlineEMTrainer
-from utils.data import ScidtbDataset, ScidtbDatasetWithEmb
+from utils.data import ScidtbDataset, ScidtbDatasetWithEmb, DiscourseDatasetWithEmb
 
 
 def dndmv_main(args):
     ##################
     # Arguments
-    model_name = "debug"
     path_config = args.config
     cfg = dndmv_config(utils.Config(path_config))
 
@@ -40,8 +39,10 @@ def dndmv_main(args):
     utils.set_seed(cfg["workspace"])
     ##################
     # Data preparation
-
-    train_dataset, dev_dataset, test_dataset, kmeans = load_scidtb(cfg)
+    if args.corpus == 'rstdt':
+        train_dataset, dev_dataset, test_dataset, kmeans = load_rstdt(cfg)
+    else:
+        train_dataset, dev_dataset, test_dataset, kmeans = load_scidtb(cfg)
 
     ##################
     # Model preparation
@@ -68,7 +69,7 @@ def dndmv_main(args):
 
     # trainer.init_train(cfg.getint("epoch_init"))
     trainer.init_train_v2(train_dataset, cfg["epoch_init"], True)
-    trainer.train(cfg["epoch"], stop_hook=trainer.uas_stop_hook)
+    trainer.train(cfg["epoch"], stop_hook=trainer.default_stop_hook)
 
     # evaluate
     dmv.load_state_dict(torch.load(trainer.workspace / 'best_ll' / 'dmv'))
@@ -114,18 +115,18 @@ def load_scidtb(cfg: Dict):
     remove_root(test)
     remove_root(dev)
     train_dataset = ScidtbDatasetWithEmb(train, vocab_word=vocab_word, vocab_postag=vocab_postag, vocab_deprel=vocab_deprel,
-                                         vocab_relation=vocab_relation, encoder=cfg["encoder"], pretrained=cfg['embedding'])
+                                         vocab_relation=vocab_relation, pretrained=cfg['embedding'])
     test_dataset = ScidtbDatasetWithEmb(test, vocab_word=vocab_word, vocab_postag=vocab_postag, vocab_deprel=vocab_deprel,
-                                        vocab_relation=vocab_relation, encoder=cfg["encoder"], pretrained=cfg['embedding'])
+                                        vocab_relation=vocab_relation, pretrained=cfg['embedding'])
     dev_dataset = ScidtbDatasetWithEmb(dev, vocab_word=vocab_word, vocab_postag=vocab_postag, vocab_deprel=vocab_deprel,
-                                       vocab_relation=vocab_relation, encoder=cfg["encoder"], pretrained=cfg['embedding'])
+                                       vocab_relation=vocab_relation, pretrained=cfg['embedding'])
     utils.writelog("Build Kmeans cluster")
     if cfg['norm']:
         std = train_dataset.norm_embed(None)
         dev_dataset.norm_embed(std)
         test_dataset.norm_embed(std)
 
-    # TODO alert here change dim_word_emb
+    # alert here change dim_word_emb
     cfg['dim_word_emb'] = train_dataset[0].context_embed_np.shape[-1]
 
     # kcluster labels
@@ -153,12 +154,59 @@ def load_scidtb(cfg: Dict):
 
     # cfg cluster
 
-    # clean
-    train_dataset.clean_encoder()
-    dev_dataset.clean_encoder()
-    test_dataset.clean_encoder()
-
     return train_dataset, dev_dataset, test_dataset, kmeans
+
+def load_rstdt(cfg: Dict):
+    ##################
+    # Data preparation
+    begin_time = time.time()
+
+    vocab_word = utils.read_vocab(os.path.join(cfg["data"], "rstdt-vocab", "words.vocab.txt"))
+    vocab_postag = utils.read_vocab(os.path.join(cfg["data"], "rstdt-vocab", "postags.vocab.txt"))
+    vocab_deprel = utils.read_vocab(os.path.join(cfg["data"], "rstdt-vocab", "deprels.vocab.txt"))
+    vocab_relation = utils.read_vocab(os.path.join(cfg["data"], "rstdt-vocab", "relations.coarse.vocab.txt"))
+
+    train = dataloader.read_rstdt("train", relation_level="coarse-grained", with_root=True)
+    test = dataloader.read_rstdt("test", relation_level="coarse-grained", with_root=True)
+    # dev = dataloader.read_scidtb("dev", "gold", relation_level="coarse-grained")
+    # build for debug
+    remove_root(train)
+    remove_root(test)
+
+    train_dataset = DiscourseDatasetWithEmb(train, vocab_word=vocab_word, vocab_postag=vocab_postag, vocab_deprel=vocab_deprel,
+                                            vocab_relation=vocab_relation, pretrained=cfg['embedding'])
+    test_dataset = DiscourseDatasetWithEmb(test, vocab_word=vocab_word, vocab_postag=vocab_postag, vocab_deprel=vocab_deprel,
+                                           vocab_relation=vocab_relation, pretrained=cfg['embedding'])
+    utils.writelog("Build Kmeans cluster")
+    if cfg['norm']:
+        std = train_dataset.norm_embed(None)
+        test_dataset.norm_embed(std)
+
+    # alert here change dim_word_emb
+    cfg['dim_word_emb'] = train_dataset[0].context_embed_np.shape[-1]
+
+    # kcluster labels
+    kmeans = train_dataset.kmeans(cfg["cluster"], 42)
+    train_dataset.kmeans_label(kmeans)
+    test_dataset.kmeans_label(kmeans)
+
+    # load markov label
+    # kmeans = None
+    # tag2ids = utils.load_markov_label('data/appendix/tags/', cfg['markov_label'], train_dataset, None)
+    # utils.load_markov_label('data/appendix/tags/', cfg['markov_label'], test_dataset, tag2ids)
+    end_time = time.time()
+    utils.writelog("Loaded the corpus. %f [sec.]" % (end_time - begin_time))
+
+    # utils.writelog("Update markov label number: {}".format(len(tag2ids)))
+    # cfg['cluster'] = len(tag2ids)
+
+    cfg["num_tag"] = len(vocab_postag)
+    cfg["num_pos"] = len(vocab_postag)
+    cfg["num_word"] = len(vocab_word)
+    cfg["num_deprel"] = len(vocab_deprel)
+    cfg["num_relation"] = len(vocab_relation)
+
+    return train_dataset, None, test_dataset, kmeans
 
 def remove_root(dataset: List[utils.DataInstance]):
     for ins in dataset:
@@ -171,6 +219,7 @@ def remove_root(dataset: List[utils.DataInstance]):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--corpus", type=str, default='rstdt')
     args = parser.parse_args()
     try:
         dndmv_main(args)

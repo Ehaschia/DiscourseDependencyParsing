@@ -94,7 +94,7 @@ class OnlineEMTrainer(object):
             model_ll, nn_loss, n_instance, nn_total_epoch, n_batch = 0., 0., 0, 0, 0
 
             for one_batch in it:
-                tag_array = self.converter(one_batch.word_array, one_batch.cluster_label_array)
+                tag_array = self.converter(None, one_batch.cluster_label_array)
                 arrays = namedtuple2dict(one_batch)
 
                 if self.cfg.end2end:
@@ -168,7 +168,7 @@ class OnlineEMTrainer(object):
 
             if report:
                 uas_train, ll_train = self.evaluate(self.train_ds)
-                uas_dev, ll_dev = self.evaluate(self.dev_ds)
+                uas_dev, ll_dev = 0.0, 0.0
                 uas_test, ll_test = self.evaluate(self.test_ds)
                 # utils.ex.logger.info(f'epoch {epoch_id}, dev.uas={uas_dev}, test.uas={uas_test}')
                 # utils.ex.log_scalar('dev.uas', uas_dev, epoch_id)
@@ -207,7 +207,7 @@ class OnlineEMTrainer(object):
             it = self.train_iter if self.cfg.device == 'cpu' else prefetcher(self.train_iter)
             nn_loss, n_instance, nn_epoch_total, n_batch = 0., 0, 0, 0
             for one_batch in it:
-                tag_array = self.converter(one_batch.word_array, one_batch.cluster_label_array)
+                tag_array = self.converter(None, one_batch.cluster_label_array)
                 # assert (tag_array < 40).all()
                 self.nn.eval()
                 with torch.no_grad():
@@ -246,7 +246,7 @@ class OnlineEMTrainer(object):
             utils.ex.log_scalar('init.train.loss', nn_loss, epoch_id)
 
             if report:
-                uas_dev, ll_dev = self.evaluate(self.dev_ds)
+                uas_dev, ll_dev = 0.0, 0.0
                 uas_test, ll_test = self.evaluate(self.test_ds)
                 utils.ex.logger.info(f'init epoch {epoch_id}, init.dev.uas={uas_dev}, init.test.uas={uas_test}')
                 utils.ex.log_scalar('init.dev.uas', uas_dev, epoch_id)
@@ -277,7 +277,7 @@ class OnlineEMTrainer(object):
             it = loader if self.cfg.device == 'cpu' else prefetcher(loader)
             nn_loss, n_instance = 0., 0
             for one_batch in it:
-                tag_array = self.converter(one_batch.word_array, one_batch.cluster_label_array)
+                tag_array = self.converter(None, one_batch.cluster_label_array)
                 arrays = namedtuple2dict(one_batch)
                 counts = {'r': r[one_batch.id_array], 't': t[one_batch.id_array], 'd': d[one_batch.id_array]}
                 loss, nn_epoch = self.non_end2end_neural_train(tag_array, arrays, counts, epoch=subepoch)  # noqa
@@ -286,7 +286,7 @@ class OnlineEMTrainer(object):
             if report:
                 self.nn.eval()
                 uas_train, ll_train = self.evaluate(self.train_ds)
-                uas_dev, ll_dev = self.evaluate(self.dev_ds)
+                uas_dev, ll_dev = 0.0, 0.0
                 uas_test, ll_test = self.evaluate(self.test_ds)
                 # utils.ex.logger.info(f'init epoch {epoch_id}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
                 utils.logger.info(f'init epoch {epoch_id}, init.train.uas= {uas_train}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
@@ -335,7 +335,7 @@ class OnlineEMTrainer(object):
         loader = dataset.get_dataloader(False, len(dataset), False, 0, 0, 1, self.cfg.max_len_eval)
         it = loader if self.cfg.device == 'cpu' else prefetcher(loader)
         for one_batch in it:
-            tag_array = self.converter(one_batch.word_array, one_batch.cluster_label_array)
+            tag_array = self.converter(None, one_batch.cluster_label_array)
             arrays = namedtuple2dict(one_batch)
             with torch.no_grad():
                 nn_t, nn_d, nn_r = self.nn.predict_pipeline(arrays, tag_array, mode='tdr')
@@ -347,7 +347,7 @@ class OnlineEMTrainer(object):
                 d = self.dmv.build_final_dec_scores(d, using_fake=False)
                 t = self.dmv.build_final_trans_scores(t, r, using_fake=False)
 
-                out, ll = self.dmv.parse(t, d, one_batch.len_array, one_batch.sent_map_array)
+                out, ll = self.dmv.parse(t, d, one_batch.len_array, one_batch.sent_map_array, one_batch.paragraph_map_array)
                 pred.extend(out)
                 ll_sum += ll
 

@@ -81,7 +81,7 @@ class DMV(nn.Module):
         return prob
 
     def parse(self, final_trans_scores: Tensor, final_dec_scores: Tensor, len_array: Tensor,
-              sent_map_array:Optional[Tensor]=None) -> Tuple[List[List[int]], float]:
+              sent_map_array:Optional[Tensor]=None, paragraph_map_array:Optional[Tensor]=None) -> Tuple[List[List[int]], float]:
         """final_scores contain ROOT compared to scores"""
 
         ## BP to get counts
@@ -106,7 +106,9 @@ class DMV(nn.Module):
         ## Directly calculate counts
         # heads, head_valences, valences = batch_parse(final_trans_scores, final_dec_scores, len_array)
         sent_map_np = sent_map_array.cpu().detach().numpy()
-        heads, head_valences, valences = batch_discourse_parse(final_trans_scores, final_dec_scores, len_array, sent_map_np)
+        paragraph_map_np = paragraph_map_array.cpu().detach().numpy()
+        heads, head_valences, valences = batch_discourse_parse(final_trans_scores, final_dec_scores, len_array,
+                                                               sent_map_np, paragraph_map_np)
         # heads = heads.detach().cpu().numpy()
         result2 = []
         len_array = len_array.cpu()
@@ -1481,24 +1483,24 @@ def batch_inside_prob(trans_scores, dec_scores, tag_prop, len_array, mode='sum',
 
 
 # # debug batch inside
-if __name__ == '__main__':
-    torch.random.manual_seed(46)
-
-    dlen = 10
-    cv = 2
-    dv = 2
-    sbnds = [(0, 1), (2, 4), (5, 8)]
-    pbnds = [(0, 0), (1, 2)]
-
-    tscore = -1.0 * torch.rand(dlen, dlen, cv)
-    dscore = -1.0 * torch.zeros(dlen, 2, dv, 2)
-
-    # gold = batch_inside(tscore.unsqueeze(0),
-    #                     dscore.unsqueeze(0),
-    #                     torch.tensor([dlen]).long())
-    tscore_np = tscore.numpy()
-    dscore_np = dscore.numpy()
-    res = discourse_inside(tscore, dscore, sbnds)
-    idx = discourse_parse(tscore_np, dscore_np, sbnds)
-    print(res)
-    print(idx[0])
+# if __name__ == '__main__':
+#     torch.random.manual_seed(46)
+#
+#     dlen = 10
+#     cv = 2
+#     dv = 2
+#     sbnds = [(0, 1), (2, 4), (5, 8)]
+#     pbnds = [(0, 0), (1, 2)]
+#
+#     tscore = -1.0 * torch.rand(dlen, dlen, cv)
+#     dscore = -1.0 * torch.zeros(dlen, 2, dv, 2)
+#
+#     # gold = batch_inside(tscore.unsqueeze(0),
+#     #                     dscore.unsqueeze(0),
+#     #                     torch.tensor([dlen]).long())
+#     tscore_np = tscore.numpy()
+#     dscore_np = dscore.numpy()
+#     res = discourse_inside(tscore, dscore, sbnds)
+#     idx = discourse_parse(tscore_np, dscore_np, sbnds)
+#     print(res)
+#     print(idx[0])

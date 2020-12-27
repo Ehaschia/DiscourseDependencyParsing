@@ -68,3 +68,6 @@ def _attachment_scores(preds, golds):
               "LAS_info": las_info}
     return scores
 
+def attachment_scores_v2(preds, golds):
+    scores = _attachment_scores(preds, golds)
+    return scores

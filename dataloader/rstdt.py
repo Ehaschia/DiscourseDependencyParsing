@@ -94,7 +94,7 @@ def read_rstdt(split, relation_level, with_root=False):
         if relation_level == "coarse-grained":
             arcs = [(h,d,relation_mapper.f2c(l)) for h,d,l in arcs]
         kargs["arcs"] = arcs
-
+        kargs["name"] = filename
         # DataInstance
         # data = utils.DataInstance(
         #                 edus=edus,
