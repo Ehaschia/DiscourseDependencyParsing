@@ -359,7 +359,7 @@ class OnlineEMTrainer(object):
     @staticmethod
     def default_stop_hook(epoch_id: int, ll: float, best_ll: float, best_ll_epoch: int, uas: float,
             best_uas: float, best_uas_epoch: int) -> bool:
-        return epoch_id > best_ll_epoch + 10
+        return epoch_id > best_uas_epoch + 10
 
     @staticmethod
     def uas_stop_hook(epoch_id: int, ll: float, best_ll: float, best_ll_epoch: int, uas: float,
