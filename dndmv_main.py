@@ -68,7 +68,8 @@ def dndmv_main(args):
     utils.writelog(f"random dmv test.uas={uas_nn}, ll={ll_dmv}")
 
     # trainer.init_train(cfg.getint("epoch_init"))
-    trainer.init_train_v2(train_dataset, cfg["epoch_init"], True)
+    # trainer.init_train_v2(train_dataset, cfg["epoch_init"], True)
+    trainer.semi_supervised_init(train_dataset, cfg["epoch_init"], True)
     trainer.train(cfg["epoch"], stop_hook=trainer.default_stop_hook)
 
     # evaluate
@@ -190,10 +191,10 @@ def load_rstdt(cfg: Dict):
     train_dataset.kmeans_label(kmeans)
     test_dataset.kmeans_label(kmeans)
 
-    # load markov label
+    # # load markov label
     # kmeans = None
-    # tag2ids = utils.load_markov_label('data/appendix/tags/', cfg['markov_label'], train_dataset, None)
-    # utils.load_markov_label('data/appendix/tags/', cfg['markov_label'], test_dataset, tag2ids)
+    # tag2ids = utils.load_markov_label('data/appendix/rstdt_tags.pkl', cfg['markov_label'], train_dataset, None)
+    # utils.load_markov_label('data/appendix/rstdt_tags.pkl', cfg['markov_label'], test_dataset, tag2ids)
     end_time = time.time()
     utils.writelog("Loaded the corpus. %f [sec.]" % (end_time - begin_time))
 
@@ -219,7 +220,7 @@ def remove_root(dataset: List[utils.DataInstance]):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
-    parser.add_argument("--corpus", type=str, default='rstdt')
+    parser.add_argument("--corpus", type=str, default='scidtb')
     args = parser.parse_args()
     try:
         dndmv_main(args)

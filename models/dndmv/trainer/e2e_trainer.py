@@ -8,9 +8,9 @@ from easydict import EasyDict
 import utils
 from models.dndmv.dmv import DMV
 from models.dndmv.dndmv import DiscriminativeNeuralDMV
-from utils.data import ConllDataset, prefetcher, ScidtbDataset
+from utils.data import ConllDataset, prefetcher, ScidtbDataset, ScidtbDatasetWithEmb
 from utils.utils import calculate_uas, make_sure_dir_exists, namedtuple2dict
-
+from torch.utils.data import Dataset
 
 class OnlineEMTrainer(object):
     """Online EM algorithm
@@ -252,7 +252,7 @@ class OnlineEMTrainer(object):
                 utils.ex.log_scalar('init.dev.uas', uas_dev, epoch_id)
                 utils.ex.log_scalar('init.test.uas', uas_test, epoch_id)
 
-    def init_train_v2(self, dataset: ConllDataset, epoch: Optional[int] = None, report: bool = True, subepoch: Optional[int] = None):
+    def init_train_v2(self, dataset: Dataset, epoch: Optional[int] = None, report: bool = True, subepoch: Optional[int] = None):
         """
         unlike init_train, here directly use pretrained counts to train nn.
         in init_train, pretrained counts first init dmv, then run dmv get counts, then train nn.
@@ -286,16 +286,62 @@ class OnlineEMTrainer(object):
             if report:
                 self.nn.eval()
                 uas_train, ll_train = self.evaluate(self.train_ds)
-                uas_dev, ll_dev = 0.0, 0.0
+                uas_dev, ll_dev = self.evaluate(self.dev_ds)
                 uas_test, ll_test = self.evaluate(self.test_ds)
                 # utils.ex.logger.info(f'init epoch {epoch_id}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
                 utils.logger.info(f'init epoch {epoch_id}, init.train.uas= {uas_train}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
 
-                # TODO ugly adapt
-                if uas_test > 0.527:
-                    break
+                # # TODO ugly adapt
+                # if uas_test > 0.527:
+                #     break
                 # utils.ex.log_scalar('init.dev.uas', uas_dev, epoch_id)
                 # utils.ex.log_scalar('init.test.uas', uas_test, epoch_id)
+
+    def semi_supervised_init(self, dataset: Dataset, epoch: Optional[int] = None, report: bool = True,
+                             subepoch: Optional[int] = None):
+        supervised_ratio = self.cfg.supervised_ratio
+        assert 0.0 < supervised_ratio < 1.0
+        dataset_size = len(dataset)
+        supervised_part = dataset[:int(dataset_size*supervised_ratio)]
+        for inst in supervised_part:
+            inst.supervised = True
+        for inst in dataset:
+            if not inst.supervised:
+                inst.instance_weight = self.cfg.unsupervised_weight
+
+        heads, valences, head_valences = self.dmv.batch_recovery(dataset)
+        len_array = dataset.get_all_len().to(self.cfg.device)
+        _loader = iter(dataset.get_dataloader(False, len(dataset), False, 0, 0))
+        _loader = prefetcher(_loader) if self.cfg.device != 'cpu' else _loader
+        _batch = next(_loader)
+        with torch.no_grad():
+            # tag_array = self.converter(_batch[2], _batch[1])
+            r, t, d = self.dmv.calcu_viterbi_count(heads, head_valences, valences, len_array)
+            d = torch.sum(d, dim=2)
+            t = self.nn.transition_param_helper_2(t)
+        epoch = epoch or self.cfg.epoch_init
+        subepoch = subepoch or self.cfg.epoch_nn
+
+        for epoch_id in range(epoch):
+            loader = dataset.get_dataloader(
+                same_len=self.cfg.same_len, num_workers=self.cfg.num_worker, min_len=self.cfg.min_len_train,
+                max_len=self.cfg.max_len_train, batch_size=self.cfg.e_batch_size, shuffle=self.cfg.shuffle, drop_last=self.cfg.drop_last)
+            it = loader if self.cfg.device == 'cpu' else prefetcher(loader)
+            nn_loss, n_instance = 0., 0
+            for one_batch in it:
+                tag_array = self.converter(None, one_batch.cluster_label_array)
+                arrays = namedtuple2dict(one_batch)
+                counts = {'r': r[one_batch.id_array], 't': t[one_batch.id_array], 'd': d[one_batch.id_array]}
+                loss, nn_epoch = self.non_end2end_neural_train(tag_array, arrays, counts, epoch=subepoch)  # noqa
+                nn_loss += loss
+                n_instance += len(one_batch.id_array)
+            if report:
+                self.nn.eval()
+                uas_train, ll_train = self.evaluate(self.train_ds)
+                uas_dev, ll_dev = self.evaluate(self.dev_ds)
+                uas_test, ll_test = self.evaluate(self.test_ds)
+                # utils.ex.logger.info(f'init epoch {epoch_id}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
+                utils.logger.info(f'init epoch {epoch_id}, init.train.uas= {uas_train}, init.dev.uas={uas_dev}, init.test.uas={uas_test}, loss={nn_loss}')
 
     def non_end2end_neural_train(self, tag_array: Tensor, arrays: Dict[str, Tensor], counts: Dict[str, Tensor],
             mode: str = 'tdr', epoch: Optional[int] = None, batch_size: Optional[int] = None) -> Tuple[float, int]:

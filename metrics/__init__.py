@@ -1,1 +1,1 @@
-from .attachment_scores import attachment_scores
+from .attachment_scores import attachment_scores, attachment_scores_v2

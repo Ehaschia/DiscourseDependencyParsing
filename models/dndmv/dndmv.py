@@ -141,10 +141,14 @@ class DiscriminativeNeuralDMV(nn.Module):
         len_array = arrays['len']
         max_len = arrays['edus_len'].size()[1]
         mask = make_mask(len_array, max_len)
+        weight = arrays['weight']
         params = self(arrays, tag_array, mode)
         for i, m in enumerate(mode):
             if m == 't' and params[i] is not None:
                 params[i] = self.transition_param_helper_2(params[i])
+        for i, t in enumerate(params):
+            weight_shape = tuple([-1] + [1] * (len(t.size())-1))
+            params[i] = t * weight.reshape(weight_shape)
         loss = self.loss(params, counts, mask, mode)
         return loss
 

@@ -307,6 +307,7 @@ import utils
 #         logits = F.reshape(logits, (batch_size, n_arcs, self.n_relations)) # (batch_size, n_arcs, n_relations)
 #
 #         return logits
+from models.context_sensitive_encoder import CSEncoder
 
 
 class ArcFactoredModel(nn.Module):
@@ -378,65 +379,39 @@ class ArcFactoredModel(nn.Module):
 
         # links = {}
         # EDU embedding
-        # links["embed_word"] = L.EmbedID(len(self.vocab_word),
-        #                                 self.word_dim,
-        #                                 ignore_label=-1,
-        #                                 initialW=initialW)
-
         self.embed_word = nn.Embedding(len(self.vocab_word),
                                        self.word_dim)
         self.embed_word.weight.data = torch.tensor(initialW)
-        # links["embed_postag"] = L.EmbedID(len(self.vocab_postag),
-        #                                   self.postag_dim,
-        #                                   ignore_label=-1,
-        #                                   initialW=None)
+
         self.embed_postag = nn.Embedding(len(self.vocab_postag),
                                          self.postag_dim)
 
-        # links["embed_deprel"] = L.EmbedID(len(self.vocab_deprel),
-        #                                   self.deprel_dim,
-        #                                   ignore_label=-1,
-        #                                   initialW=None)
         self.embed_deprel = nn.Embedding(len(self.vocab_deprel),
                                          self.deprel_dim)
-        # links["W_edu"] = L.Linear(self.word_dim + self.postag_dim +
-        #                           self.word_dim + self.postag_dim +
-        #                           self.word_dim + self.postag_dim + self.deprel_dim,
-        #                           self.word_dim)
-        self.W_edu = nn.Linear(self.word_dim + self.postag_dim +
-                               self.word_dim + self.postag_dim +
-                               self.word_dim + self.postag_dim + self.deprel_dim,
-                               self.word_dim)
+        self.encoder = CSEncoder('bert', self.device)
+        # self.W_edu = nn.Linear(self.word_dim + self.postag_dim +
+        #                        self.word_dim + self.postag_dim +
+        #                        self.word_dim + self.postag_dim + self.deprel_dim,
+        #                        self.word_dim)
+        self.W_edu = nn.Linear(768, self.word_dim)
         # BiLSTM
-        # links["bilstm"] = L.NStepBiLSTM(n_layers=1,
-        #                                 in_size=self.word_dim,
-        #                                 out_size=self.lstm_dim,
-        #                                 dropout=0.0)
         self.bilstm = nn.LSTM(num_layers=1,
                               input_size=self.word_dim,
                               hidden_size=self.lstm_dim,
                               bidirectional=True,
                               dropout=0.0)
         # MLPs
-        # links["W1_a"] = L.Linear(self.bilstm_dim + self.tempfeat1_dim +
-        #                          self.bilstm_dim + self.tempfeat1_dim +
-        #                          self.tempfeat2_dim,
-        #                          self.mlp_dim)
-        self.W1_a = nn.Linear(self.bilstm_dim + self.tempfeat1_dim +
-                              self.bilstm_dim + self.tempfeat1_dim +
-                              self.tempfeat2_dim,
+        self.W1_a = nn.Linear(self.bilstm_dim +
+                              self.bilstm_dim,
                               self.mlp_dim)
-        # links["W2_a"] = L.Linear(self.mlp_dim, 1)
+
         self.W2_a = nn.Linear(self.mlp_dim, 1)
-        # links["W1_r"] = L.Linear(self.bilstm_dim + self.tempfeat1_dim +
-        #                          self.bilstm_dim + self.tempfeat1_dim +
-        #                          self.tempfeat2_dim,
-        #                          self.mlp_dim)
-        self.W1_r = nn.Linear(self.bilstm_dim + self.tempfeat1_dim +
-                              self.bilstm_dim + self.tempfeat1_dim +
+
+        self.W1_r = nn.Linear(self.bilstm_dim +
+                              self.bilstm_dim +
                               self.tempfeat2_dim,
                               self.mlp_dim)
-        # links["W2_r"] = L.Linear(self.mlp_dim, self.n_relations)
+
         self.W2_r = nn.Linear(self.mlp_dim, self.n_relations)
 
     #########################
@@ -458,61 +433,63 @@ class ArcFactoredModel(nn.Module):
         assert len(edus_head[0]) == 3 # NOTE
         assert edus_head[0] == ("<root>", "<root>", "<root>") # NOTE
 
+        #
+        # # Beginning-word embedding
+        # begin_word_ids = [self.vocab_word.get(edu[0], self.unk_word_id) for edu in edus] # n_edus * int
+        # begin_word_ids = np.asarray(begin_word_ids, dtype=np.int32) # (n_edus,)
+        # begin_word_ids = torch.tensor(begin_word_ids).long().to(self.device) # (n_edus,)
+        # begin_word_vectors = F.dropout(self.embed_word(begin_word_ids), p=0.2) # (n_edus, word_dim)
+        #
+        # # End-word embedding
+        # end_word_ids = [self.vocab_word.get(edu[-1], self.unk_word_id) for edu in edus] # n_edus * int
+        # end_word_ids = np.asarray(end_word_ids, dtype=np.int32) # (n_edus,)
+        # end_word_ids = torch.tensor(end_word_ids).long().to(self.device) # (n_edus,)
+        # end_word_vectors = F.dropout(self.embed_word(end_word_ids), p=0.2) # (n_edus, word_dim)
+        #
+        # # Head-word embedding
+        # head_word_ids = [self.vocab_word.get(head_word, self.unk_word_id)
+        #                  for (head_word, head_postag, head_deprel) in edus_head] # n_edus * int
+        # head_word_ids = np.asarray(head_word_ids, dtype=np.int32) # (n_edus,)
+        # head_word_ids = torch.tensor(head_word_ids).long().to(self.device) # (n_edus,)
+        # head_word_vectors = F.dropout(self.embed_word(head_word_ids), p=0.2) # (n_edus, word_dim)
+        #
+        # # Beginning-postag embedding
+        # begin_postag_ids = [self.vocab_postag[edu_postag[0]] for edu_postag in edus_postag] # n_edus * int
+        # begin_postag_ids = np.asarray(begin_postag_ids, dtype=np.int32) # (n_edus,)
+        # begin_postag_ids = torch.tensor(begin_postag_ids).long().to(self.device) # (n_edus,)
+        # begin_postag_vectors = F.dropout(self.embed_postag(begin_postag_ids), p=0.2) # (n_edus, postag_dim)
+        #
+        # # End-postag embedding
+        # end_postag_ids = [self.vocab_postag[edu_postag[-1]] for edu_postag in edus_postag] # n_edus * int
+        # end_postag_ids = np.asarray(end_postag_ids, dtype=np.int32) # (n_edus,)
+        # end_postag_ids = torch.tensor(end_postag_ids).long().to(self.device) # (n_edus,)
+        # end_postag_vectors = F.dropout(self.embed_postag(end_postag_ids), p=0.2) # (n_edus, postag_dim)
+        #
+        # # Head-postag embedding
+        # head_postag_ids = [self.vocab_postag[head_postag]
+        #                  for (head_word, head_postag, head_deprel) in edus_head] # n_edus * int
+        # head_postag_ids = np.asarray(head_postag_ids, dtype=np.int32) # (n_edus,)
+        # head_postag_ids = torch.tensor(head_postag_ids).long().to(self.device) # (n_edus,)
+        # head_postag_vectors = F.dropout(self.embed_postag(head_postag_ids), p=0.2) # (n_edus, postag_dim)
+        #
+        # # Head-deprel embedding
+        # head_deprel_ids = [self.vocab_deprel.get(head_deprel, self.unk_deprel_id)
+        #                  for (head_word, head_postag, head_deprel) in edus_head] # n_edus * int
+        # head_deprel_ids = np.asarray(head_deprel_ids, dtype=np.int32) # (n_edus,)
+        # head_deprel_ids = torch.tensor(head_deprel_ids).long().to(self.device) # (n_edus,)
+        # head_deprel_vectors = F.dropout(self.embed_deprel(head_deprel_ids), p=0.2) # (n_edus, deprel_dim)
+        #
+        # # Concat
+        # edu_vectors = torch.cat([begin_word_vectors,
+        #                         end_word_vectors,
+        #                         head_word_vectors,
+        #                         begin_postag_vectors,
+        #                         end_postag_vectors,
+        #                         head_postag_vectors,
+        #                         head_deprel_vectors],
+        #                         dim=1) # (n_edus, 3 * word_dim + 3 * postag_dim + deprel_dim)
 
-        # Beginning-word embedding
-        begin_word_ids = [self.vocab_word.get(edu[0], self.unk_word_id) for edu in edus] # n_edus * int
-        begin_word_ids = np.asarray(begin_word_ids, dtype=np.int32) # (n_edus,)
-        begin_word_ids = torch.tensor(begin_word_ids).long().to(self.device) # (n_edus,)
-        begin_word_vectors = F.dropout(self.embed_word(begin_word_ids), p=0.2) # (n_edus, word_dim)
-
-        # End-word embedding
-        end_word_ids = [self.vocab_word.get(edu[-1], self.unk_word_id) for edu in edus] # n_edus * int
-        end_word_ids = np.asarray(end_word_ids, dtype=np.int32) # (n_edus,)
-        end_word_ids = torch.tensor(end_word_ids).long().to(self.device) # (n_edus,)
-        end_word_vectors = F.dropout(self.embed_word(end_word_ids), p=0.2) # (n_edus, word_dim)
-
-        # Head-word embedding
-        head_word_ids = [self.vocab_word.get(head_word, self.unk_word_id)
-                         for (head_word, head_postag, head_deprel) in edus_head] # n_edus * int
-        head_word_ids = np.asarray(head_word_ids, dtype=np.int32) # (n_edus,)
-        head_word_ids = torch.tensor(head_word_ids).long().to(self.device) # (n_edus,)
-        head_word_vectors = F.dropout(self.embed_word(head_word_ids), p=0.2) # (n_edus, word_dim)
-
-        # Beginning-postag embedding
-        begin_postag_ids = [self.vocab_postag[edu_postag[0]] for edu_postag in edus_postag] # n_edus * int
-        begin_postag_ids = np.asarray(begin_postag_ids, dtype=np.int32) # (n_edus,)
-        begin_postag_ids = torch.tensor(begin_postag_ids).long().to(self.device) # (n_edus,)
-        begin_postag_vectors = F.dropout(self.embed_postag(begin_postag_ids), p=0.2) # (n_edus, postag_dim)
-
-        # End-postag embedding
-        end_postag_ids = [self.vocab_postag[edu_postag[-1]] for edu_postag in edus_postag] # n_edus * int
-        end_postag_ids = np.asarray(end_postag_ids, dtype=np.int32) # (n_edus,)
-        end_postag_ids = torch.tensor(end_postag_ids).long().to(self.device) # (n_edus,)
-        end_postag_vectors = F.dropout(self.embed_postag(end_postag_ids), p=0.2) # (n_edus, postag_dim)
-
-        # Head-postag embedding
-        head_postag_ids = [self.vocab_postag[head_postag]
-                         for (head_word, head_postag, head_deprel) in edus_head] # n_edus * int
-        head_postag_ids = np.asarray(head_postag_ids, dtype=np.int32) # (n_edus,)
-        head_postag_ids = torch.tensor(head_postag_ids).long().to(self.device) # (n_edus,)
-        head_postag_vectors = F.dropout(self.embed_postag(head_postag_ids), p=0.2) # (n_edus, postag_dim)
-
-        # Head-deprel embedding
-        head_deprel_ids = [self.vocab_deprel.get(head_deprel, self.unk_deprel_id)
-                         for (head_word, head_postag, head_deprel) in edus_head] # n_edus * int
-        head_deprel_ids = np.asarray(head_deprel_ids, dtype=np.int32) # (n_edus,)
-        head_deprel_ids = torch.tensor(head_deprel_ids).long().to(self.device) # (n_edus,)
-        head_deprel_vectors = F.dropout(self.embed_deprel(head_deprel_ids), p=0.2) # (n_edus, deprel_dim)
-
-        # Concat
-        edu_vectors = torch.cat([begin_word_vectors,
-                                end_word_vectors,
-                                head_word_vectors,
-                                begin_postag_vectors,
-                                end_postag_vectors,
-                                head_postag_vectors,
-                                head_deprel_vectors],
-                                dim=1) # (n_edus, 3 * word_dim + 3 * postag_dim + deprel_dim)
+        edu_vectors, _ = self.encoder.encode(edus)
         edu_vectors = F.relu(self.W_edu(edu_vectors)) # (n_edus, word_dim)
 
         # BiLSTM
@@ -525,19 +502,19 @@ class ArcFactoredModel(nn.Module):
 
         # h_init, c_init = None, None
         # _, _, states = self.bilstm(hx=h_init, cx=c_init, xs=[edu_vectors]) # (1, n_edus, bilstm_dim)
-        edu_vectors = states.squeeze(0) # (n_edus, bilstm_dim)
+        # edu_vectors = states.squeeze(0) # (n_edus, bilstm_dim)
+        #
+        # # Template features
+        # tempfeat1_vectors = self.template_feature_extractor1.extract_batch_features(
+        #                             edus=edus,
+        #                             edus_postag=edus_postag,
+        #                             edus_head=edus_head) # (n_edus, tempfeat1_dim)
+        # tempfeat1_vectors = torch.tensor(tempfeat1_vectors).to(self.device) # (n_edus, tempfeat1_dim)
+        #
+        # # Concat
+        # edu_vectors = torch.cat([edu_vectors, tempfeat1_vectors], dim=1) # (n_edus, bilstm_dim + tempfeat1_dim)
 
-        # Template features
-        tempfeat1_vectors = self.template_feature_extractor1.extract_batch_features(
-                                    edus=edus,
-                                    edus_postag=edus_postag,
-                                    edus_head=edus_head) # (n_edus, tempfeat1_dim)
-        tempfeat1_vectors = torch.tensor(tempfeat1_vectors).to(self.device) # (n_edus, tempfeat1_dim)
-
-        # Concat
-        edu_vectors = torch.cat([edu_vectors, tempfeat1_vectors], dim=1) # (n_edus, bilstm_dim + tempfeat1_dim)
-
-        return edu_vectors
+        return states.squeeze(0)
 
     def forward_arcs_for_attachment(
                     self,
@@ -567,15 +544,15 @@ class ArcFactoredModel(nn.Module):
         # Feature extraction
         batch_head_vectors = torch.embedding(edu_vectors, torch.tensor(batch_head).to(self.device)) # (total_arcs, bilstm_dim + tempfeat1_dim)
         batch_dep_vectors = torch.embedding(edu_vectors, torch.tensor(batch_dep).to(self.device)) # (total_arcs, bilstm_dim + tempfeat1_dim)
-        tempfeat2_vectors = self.template_feature_extractor2.extract_batch_features(
-                                    batch_head,
-                                    batch_dep,
-                                    same_sent_map) # (total_arcs, tempfeat2_dim)
-
-        tempfeat2_vectors = torch.tensor(tempfeat2_vectors).to(self.device) # (total_arcs, tempfeat2_dim)
+        # tempfeat2_vectors = self.template_feature_extractor2.extract_batch_features(
+        #                             batch_head,
+        #                             batch_dep,
+        #                             same_sent_map) # (total_arcs, tempfeat2_dim)
+        #
+        # tempfeat2_vectors = torch.tensor(tempfeat2_vectors).to(self.device) # (total_arcs, tempfeat2_dim)
         batch_arc_vectors = torch.cat([batch_head_vectors,
-                                      batch_dep_vectors,
-                                      tempfeat2_vectors],
+                                      batch_dep_vectors],
+                                      # tempfeat2_vectors],
                                       dim=1) # (total_arcs, bilstm_dim + tempfeat1_dim + bilstm_dim + tempfeat1_dim + tempfeat2_dim)
 
         # MLP (Attachment Scoring)

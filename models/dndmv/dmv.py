@@ -577,9 +577,12 @@ class DMV(nn.Module):
 
         for idx, instance in enumerate(dataset):
             # one_heads = npasarray(list(map(int, getattr(instance, predicted))))
-            one_heads = sampler.sample(inputs=instance.edu_ids, edus=instance.edus,
-                                       edus_head=instance.edus_head, sbnds=instance.sbnds, pbnds=instance.pbnds,
-                                       has_root=False)
+            if instance.supervised:
+                one_heads = instance.arcs
+            else:
+                one_heads = sampler.sample(inputs=instance.edu_ids, edus=instance.edus,
+                                           edus_head=instance.edus_head, sbnds=instance.sbnds, pbnds=instance.pbnds,
+                                           has_root=False)
             # one_heads = instance.arcs
 
             one_heads = np.asarray([rule[0] for rule in sorted(one_heads, key=lambda x: x[1])])

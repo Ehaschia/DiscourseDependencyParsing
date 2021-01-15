@@ -628,6 +628,9 @@ class ScidtbInstance:
         self._edus_list = None
         self._edus_len_np = None
         self._sent_map_np = None
+        self._paragraph_map_np = None
+        self.supervised = False
+        self.instance_weight = 1.0
 
         # kmeans parameter
         self.cluster_label = None
@@ -792,6 +795,12 @@ class ScidtbInstance:
             self._sent_map_np = np.array(self.sbnds)
         return self._sent_map_np
 
+    @property
+    def paragraph_map_np(self) -> Optional[np.ndarray]:
+        if self._paragraph_map_np is None:
+            self._paragraph_map_np = np.array(self.pbnds)
+        return self._paragraph_map_np
+
 class ScidtbDataset(Dataset):
     def __init__(self, instance_list: List[DataInstance], vocab_word: OrderedDict= None, vocab_postag: OrderedDict= None,
                  vocab_deprel: OrderedDict= None, vocab_relation: OrderedDict= None):
@@ -915,11 +924,15 @@ class ScidtbDataset(Dataset):
                                       head_deprel_array=head_deprel_array, edus_len_array=edus_len_array,
                                       edus_array=edus_array, sent_map_array=sent_map_array)
 
-ScidtbDatasetWithEmbBatchData = namedtuple("ScidtbDatasetWithEmbBatchData", ('id_array', 'pos_array', 'word_array', 'len_array',
-                                                               'first_word_array', 'end_word_array', 'head_word_array',
-                                                               'first_pos_array', 'end_pos_array', 'head_pos_array',
-                                                               'head_deprel_array', 'edus_array', 'edus_len_array',
-                                                               'sent_map_array', 'context_embed_array', 'cluster_label_array'))
+ScidtbDatasetWithEmbBatchData = namedtuple("ScidtbDatasetWithEmbBatchData", ('id_array', 'pos_array', 'word_array',
+                                                                             'len_array','first_word_array',
+                                                                             'end_word_array', 'head_word_array',
+                                                                             'first_pos_array', 'end_pos_array',
+                                                                             'head_pos_array','head_deprel_array',
+                                                                             'edus_array', 'edus_len_array',
+                                                                             'sent_map_array', 'context_embed_array',
+                                                                             'cluster_label_array', 'paragraph_map_array',
+                                                                             'weight_array'))
 
 
 class ScidtbInstanceWithEmb(ScidtbInstance):
@@ -1063,6 +1076,14 @@ class ScidtbDatasetWithEmb(ScidtbDataset):
             # maxlen = max([sent_map_ins.shape[0] for sent_map_ins in sent_map_np])
             sent_map_array = pad_sequence(list(map(torch.tensor, sent_map_np)), batch_first=True, padding_value=pad).long()
 
+        paragraph_map_np = [ins.paragraph_map_np for ins in batch_raw_data]
+        if paragraph_map_np[0] is None:
+            paragraph_map_array = None
+        else:
+            pad = -100
+            paragraph_map_array = pad_sequence(list(map(torch.tensor, paragraph_map_np)), batch_first=True,
+                                               padding_value=pad).long()
+
         context_embed_np = [ins.context_embed_np for ins in batch_raw_data]
         if context_embed_np is None:
             context_embed_array = None
@@ -1076,6 +1097,9 @@ class ScidtbDatasetWithEmb(ScidtbDataset):
         else:
             pad = 0
             cluster_label_array = pad_sequence(list(map(torch.tensor, cluster_label_np)), True, pad).long()
+
+        weight_array = torch.tensor([ins.instance_weight for ins in batch_raw_data])
+
         return ScidtbDatasetWithEmbBatchData(id_array=id_array, pos_array=None, word_array=None, len_array=len_array,
                                              first_word_array=first_word_array, end_word_array=end_word_array,
                                              head_word_array=head_word_array, first_pos_array=first_pos_array,
@@ -1083,7 +1107,8 @@ class ScidtbDatasetWithEmb(ScidtbDataset):
                                              head_deprel_array=head_deprel_array, edus_len_array=edus_len_array,
                                              edus_array=edus_array, sent_map_array=sent_map_array,
                                              context_embed_array=context_embed_array,
-                                             cluster_label_array=cluster_label_array)
+                                             cluster_label_array=cluster_label_array,
+                                             paragraph_map_array=paragraph_map_array, weight_array=weight_array)
 
 
 
@@ -1105,6 +1130,8 @@ class DiscourseInstance:
 
         # kmeans parameter
         self.cluster_label = None
+        self.supervised = False
+        self.instance_weight = 1.0
 
     def __len__(self):
         return len(self.entry.arcs)
@@ -1247,7 +1274,8 @@ class DiscourseDataset(Dataset):
 DiscourseWithEmbBatchData = namedtuple("DiscourseWithEmbBatchData", ('id_array', 'len_array','edus_array',
                                                                      'edus_len_array', 'sent_map_array',
                                                                      'paragraph_map_array',
-                                                                     'context_embed_array', 'cluster_label_array'))
+                                                                     'context_embed_array', 'cluster_label_array',
+                                                                     'weight_array'))
 
 class DiscourseInstanceWithEmb(DiscourseInstance):
     def __init__(self, id: int, entry: DataInstance, dataset: 'DiscourseDatasetWithEmb' = None):
@@ -1364,10 +1392,14 @@ class DiscourseDatasetWithEmb(DiscourseDataset):
         else:
             pad = 0
             cluster_label_array = pad_sequence(list(map(torch.tensor, cluster_label_np)), True, pad).long()
+
+
+        weight_array = torch.tensor([ins.instance_weight for ins in batch_raw_data])
         return DiscourseWithEmbBatchData(id_array=id_array, len_array=len_array, edus_len_array=edus_len_array,
                                          edus_array=edus_array, sent_map_array=sent_map_array,
                                          context_embed_array=context_embed_array,
                                          cluster_label_array=cluster_label_array,
-                                         paragraph_map_array=paragraph_map_array)
+                                         paragraph_map_array=paragraph_map_array,
+                                         weight=weight_array)
 
 
