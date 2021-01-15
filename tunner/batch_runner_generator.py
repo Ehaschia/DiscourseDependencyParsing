@@ -18,16 +18,15 @@ class BaseGenerator:
     def generate(self, load_path, batch):
         onlyfiles = [f for f in listdir(load_path) if isfile(join(load_path, f))]
         onlyfiles = sorted(onlyfiles)
-
         b = [load_path + '/batch_runner' + str(i) + '.sh' for i in range(batch)]
-        clis = [[]*batch]
-
+        clis = [[] for _ in range(batch)]
         for idx, file_name in enumerate(onlyfiles):
             cuda_idx = idx % batch + 1
             run_prefix = cuda + '=' + str(cuda_idx) + ' ' + python + ' ' + program
-            clis[idx].append(run_prefix + ' --config ' + dir_path + file_name + '\n')
+            clis[idx%batch].append(run_prefix + ' --config ' + dir_path + file_name + '\n')
 
         for f_name, cli in zip(b, clis):
+            print(f_name)
             with open(f_name, 'w') as f:
                 s = ''.join(cli)
                 f.write(s)
@@ -38,9 +37,9 @@ class BaseGenerator:
         #         run_prefix = cuda + '=' + str(idx%4) + ' ' + python + ' ' + program
         #         if (idx+1) % batch == 0:
         #             f.write(run_prefix +' --config ' + dir_path + file_name + '\n')
-        #             f.write('sleep 120\n')
+        #             f.write('sleep 5\n')
         #         else:
-        #             f.write(run_prefix + ' --config ' + dir_path + file_name + '&\n')
+        #             f.write(run_prefix + ' --config ' + dir_path + file_name + '\n')
         #             f.write('sleep 5\n')
 
 if __name__ == '__main__':
