@@ -6,7 +6,6 @@ from collections import Counter, namedtuple, OrderedDict
 from itertools import groupby
 
 import utils
-from models.context_sensitive_encoder import CSEncoder
 from utils.common import *
 from utils.utils import make_sure_dir_exists, DataInstance
 from typing import Iterable, Dict, List, Optional, Union, Iterator, Callable, Tuple, Generator, Type, Any
@@ -15,7 +14,7 @@ from torch.utils.data import Dataset, DataLoader, Sampler
 from torch.nn.utils.rnn import pad_sequence
 
 from models.functions import make_same_sent_map
-
+from dataloader import split_instance
 from sklearn.cluster import KMeans
 
 class Vocab:
@@ -1288,20 +1287,36 @@ class DiscourseInstanceWithEmb(DiscourseInstance):
 
 class DiscourseDatasetWithEmb(DiscourseDataset):
     def __init__(self, instance_list: List[DataInstance], vocab_word: OrderedDict= None, vocab_postag: OrderedDict=None,
-                 vocab_deprel: OrderedDict=None, vocab_relation: OrderedDict=None, pretrained=None):
+                 vocab_deprel: OrderedDict=None, vocab_relation: OrderedDict=None, pretrained=None, split=100000):
         super().__init__(instance_list, vocab_word, vocab_postag, vocab_deprel, vocab_relation)
         self.instances = []
-        for idx, instance in enumerate(instance_list):
-            self.instances.append(DiscourseInstanceWithEmb(idx, instance, self))
 
         # load pretrained
         if pretrained is not None:
             embeddings = utils.load_embedding(pretrained)
-            for ins in self.instances:
+            for ins in instance_list:
                 # Alert here remove embedding of <root>
-                ins.context_embed_np = embeddings[ins.name][1:]
+                setattr(ins, 'embedding', embeddings[ins.name][1:])
         else:
             raise ValueError('Pretrained path should be provided.')
+
+        short_instances = list(filter(lambda x: x.edu_ids[-1] <= split, instance_list))
+        long_instances = list(filter(lambda x: x.edu_ids[-1] > split, instance_list))
+        splitted_instances = []
+        if len(long_instances) != 0:
+            splitted_instances = []
+            for inst in long_instances:
+                splitted_instances += split_instance(inst, inst.embedding)
+        instance_list = splitted_instances + short_instances
+
+        for idx, instance in enumerate(instance_list):
+            self.instances.append(DiscourseInstanceWithEmb(idx, instance, self))
+
+        # load pretrained
+
+        for ins in self.instances:
+            # Alert here remove embedding of <root>
+            ins.context_embed_np = getattr(ins, 'embedding', None)
 
     def norm_embed(self, std):
         embed_np = []
@@ -1400,6 +1415,6 @@ class DiscourseDatasetWithEmb(DiscourseDataset):
                                          context_embed_array=context_embed_array,
                                          cluster_label_array=cluster_label_array,
                                          paragraph_map_array=paragraph_map_array,
-                                         weight=weight_array)
+                                         weight_array=weight_array)
 
 

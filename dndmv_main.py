@@ -70,7 +70,9 @@ def dndmv_main(args):
     # trainer.init_train(cfg.getint("epoch_init"))
     # trainer.init_train_v2(train_dataset, cfg["epoch_init"], True)
     trainer.semi_supervised_init(train_dataset, cfg["epoch_init"], True)
-    trainer.train(cfg["epoch"], stop_hook=trainer.default_stop_hook)
+    trainer.semi_train(cfg["epoch"], stop_hook=trainer.default_stop_hook)
+    # trainer.semi_supervised_init(train_dataset, cfg["epoch_init"], True)
+    # trainer.train(cfg["epoch"], stop_hook=trainer.default_stop_hook)
 
     # evaluate
     dmv.load_state_dict(torch.load(trainer.workspace / 'best_ll' / 'dmv'))
@@ -175,7 +177,7 @@ def load_rstdt(cfg: Dict):
     remove_root(test)
 
     train_dataset = DiscourseDatasetWithEmb(train, vocab_word=vocab_word, vocab_postag=vocab_postag, vocab_deprel=vocab_deprel,
-                                            vocab_relation=vocab_relation, pretrained=cfg['embedding'])
+                                            vocab_relation=vocab_relation, pretrained=cfg['embedding'], split=cfg['split_length'])
     test_dataset = DiscourseDatasetWithEmb(test, vocab_word=vocab_word, vocab_postag=vocab_postag, vocab_deprel=vocab_deprel,
                                            vocab_relation=vocab_relation, pretrained=cfg['embedding'])
     utils.writelog("Build Kmeans cluster")
@@ -220,7 +222,7 @@ def remove_root(dataset: List[utils.DataInstance]):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
-    parser.add_argument("--corpus", type=str, default='scidtb')
+    parser.add_argument("--corpus", type=str, default='rstdt')
     args = parser.parse_args()
     try:
         dndmv_main(args)
